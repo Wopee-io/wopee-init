@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - "main"
+  # Re-run the release on the current main head, e.g. after a failed npm publish.
+  workflow_dispatch:
 
 jobs:
   test-build:
@@ -26,7 +28,7 @@ jobs:
   release:
     needs: [test-build]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
       issues: write
