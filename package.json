@@ -1,6 +1,6 @@
 {
   "name": "@wopee-io/init",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Connect a repository and its AI coding agents to Wopee.io: writes a git-ignored .env and a key-free wopee-mcp entry for each agent.",
   "type": "module",
   "bin": {
