@@ -1,0 +1,64 @@
+{
+  "name": "@wopee-io/init",
+  "version": "0.1.0",
+  "description": "Connect a repository and its AI coding agents to Wopee.io: writes a git-ignored .env and a key-free wopee-mcp entry for each agent.",
+  "type": "module",
+  "bin": {
+    "wopee-init": "./build/index.js"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:clean": "node -e \"require('fs').rmSync('build',{recursive:true,force:true})\" && npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "homepage": "https://docs.wopee.io/agent-setup/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wopee-io/wopee-init.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Wopee-io/wopee-init/issues"
+  },
+  "keywords": [
+    "wopee",
+    "wopee.io",
+    "mcp",
+    "init",
+    "setup",
+    "claude code",
+    "cursor",
+    "codex",
+    "opencode",
+    "ai testing"
+  ],
+  "author": "Wopee.io",
+  "license": "MIT",
+  "dependencies": {
+    "@clack/prompts": "^1.9.0",
+    "jsonc-parser": "^3.3.1",
+    "undici": "^7.18.2"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@types/node": "^24.10.0",
+    "prettier": "^3.10.1",
+    "semantic-release": "^25.0.9",
+    "typescript": "^5.9.3"
+  }
+}
