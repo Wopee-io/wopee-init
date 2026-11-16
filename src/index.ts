@@ -4,12 +4,14 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import * as clack from "@clack/prompts";
+import { determineAgent } from "@vercel/detect-agent";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 
+import { callingAgentFromName } from "./callingAgent.ts";
 import { InitError } from "./errors.ts";
 import { redact } from "./redact.ts";
 import { run } from "./run.ts";
-import type { Ui } from "./run.ts";
+import type { Interaction, RunOptions, Ui } from "./run.ts";
 
 const { version } = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -17,21 +19,37 @@ const { version } = JSON.parse(
 
 const HELP = `Connect this repository and its AI coding agents to Wopee.io.
 
-Usage: npx -y @wopee-io/init --manual [options]
+Usage: npx -y @wopee-io/init [options]
 
-Opens the API Keys page of your project in Wopee.io Commander, asks for the project UUID and a
-new API key, checks them, then writes a git-ignored .env and a key-free \`wopee\` MCP server for
-each coding agent you pick.
+Prints a link and pairing words. You approve in Wopee.io Commander, and a new, named project API
+key comes back encrypted to this process: nobody copies it, and a coding agent running this never
+sees it. Then it writes a git-ignored .env and a key-free \`wopee\` MCP server for your agents.
+
+Run from a coding agent, it prints one JSON line per step on stdout (text goes to stderr). If the
+approval takes longer than ~90 s it prints {"status":"action_required",…} and exits 75; run the
+"next" command it gives (with --resume) once you have approved.
 
 Options:
-  --manual             Paste the values from the API Keys page (the only mode for now)
+  --resume             Continue a pairing an earlier run handed back
+  --no-wait            Hand back right after printing the link (agents)
+  --manual             Paste the project UUID and a key from the API Keys page instead of pairing
   --api-url <url>      Wopee.io api (default: WOPEE_API_URL, the repo's .env, https://api.wopee.io)
-  --cmd-url <url>      Commander URL, when it is not the api host with api. -> cmd.
-  --project <uuid>     Project UUID, to open its API Keys page directly
+  --cmd-url <url>      Commander URL for --manual, when it is not the api host with api. -> cmd.
+  --project <uuid>     The project, when the key comes from WOPEE_API_KEY or --api-key
+  --api-key <key>      Use this key instead of pairing (prefer the WOPEE_API_KEY variable: a flag
+                       ends up in your shell history)
   --agent <id>         claude-code, cursor, vscode, opencode or codex; repeat for several
+  --all                Configure every supported agent
+  --print              Print the MCP snippets instead of writing anything
+  --dry-run            Show what would change without writing anything or fetching a key
   --no-open            Print the link without opening a browser
   -h, --help           Show this help
   -v, --version        Show the version
+
+In CI it never pairs: set WOPEE_API_KEY and WOPEE_PROJECT_UUID as secrets.
+
+Exit codes: 0 done, 2 usage, 3 credentials, 4 network or instance, 5 unsafe or conflicting file,
+6 pairing denied or expired, 75 waiting for your approval, 130 cancelled.
 `;
 
 function openUrl(url: string): void {
@@ -61,7 +79,7 @@ async function answer<T>(value: Promise<T>): Promise<Exclude<T, symbol>> {
   return result as Exclude<T, symbol>;
 }
 
-const ui: Ui = {
+const interactiveUi: Ui = {
   info: (message) => clack.log.info(redact(message)),
   warn: (message) => clack.log.warn(redact(message)),
   success: (message) => clack.log.success(redact(message)),
@@ -97,7 +115,40 @@ const ui: Ui = {
   },
 };
 
-function installProxy(env: NodeJS.ProcessEnv): void {
+/** Writes one JSON object per line to stdout. Every line is redacted, like every printed word. */
+function emit(event: Record<string, unknown>): void {
+  process.stdout.write(`${redact(JSON.stringify(event))}\n`);
+}
+
+const say = (message: string) => process.stderr.write(`${redact(message)}\n`);
+
+function noPrompt(): never {
+  throw new InitError(
+    "no_tty",
+    "This step needs an answer, and there is no terminal to ask in. Run it in your own terminal.",
+  );
+}
+
+/** Agent and CI mode: events on stdout for the agent to parse, text on stderr, never a prompt. */
+const machineUi: Ui = {
+  info: say,
+  warn: (message) => say(`Warning: ${message}`),
+  success: say,
+  link: say,
+  // A browser window an agent opened unasked is surprising; the link is in the output.
+  openUrl: () => {},
+  askText: async () => noPrompt(),
+  askSecret: async () => noPrompt(),
+  confirm: async () => noPrompt(),
+  selectAgents: async () => noPrompt(),
+  withSpinner: (_message, task) => task(),
+  event: emit,
+};
+
+function installProxy(
+  env: NodeJS.ProcessEnv,
+  log: (message: string) => void,
+): void {
   const proxy =
     env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
   if (!proxy) return;
@@ -109,19 +160,79 @@ function installProxy(env: NodeJS.ProcessEnv): void {
   } catch {
     // Keep the generic name.
   }
-  clack.log.info(`Using proxy ${host}`);
+  log(`Using proxy ${host}`);
+}
+
+const isCi = (env: NodeJS.ProcessEnv) =>
+  !!env.CI && !["false", "0"].includes(env.CI.toLowerCase());
+
+function report(error: unknown, interaction: Interaction): number {
+  const machine = interaction !== "interactive";
+  if (error instanceof InitError) {
+    if (machine) {
+      if (error.code === "action_required") {
+        say(error.message);
+        emit({ status: "action_required", ...error.details, next: error.next });
+      } else {
+        say(error.message);
+        emit({
+          status: "error",
+          code: error.code,
+          message: error.message,
+          ...(error.next ? { next: error.next } : {}),
+        });
+      }
+    } else if (error.code === "cancelled") {
+      clack.cancel(redact(error.message));
+    } else {
+      clack.log.error(redact(error.message));
+      if (error.next) clack.log.info(`Next: ${error.next}`);
+      clack.outro("Setup did not finish.");
+    }
+    return error.exitCode;
+  }
+  const message = `Unexpected error: ${(error as Error)?.message ?? String(error)}`;
+  if (machine) {
+    say(message);
+    emit({ status: "error", code: "unexpected", message });
+  } else {
+    clack.log.error(redact(message));
+    clack.outro(
+      "Setup did not finish. Nothing secret was printed; report this at https://github.com/Wopee-io/wopee-init/issues",
+    );
+  }
+  return 1;
 }
 
 async function main(): Promise<number> {
+  const tty = !!(process.stdin.isTTY && process.stdout.isTTY);
+  const detected = await determineAgent().catch(() => ({
+    isAgent: false as const,
+    agent: undefined,
+  }));
+  const interaction: Interaction = detected.isAgent
+    ? "agent"
+    : isCi(process.env)
+      ? "ci"
+      : tty
+        ? "interactive"
+        : "agent";
+
   let args;
   try {
     args = parseArgs({
       options: {
         manual: { type: "boolean", default: false },
+        resume: { type: "boolean", default: false },
+        "no-wait": { type: "boolean", default: false },
         "api-url": { type: "string" },
         "cmd-url": { type: "string" },
         project: { type: "string" },
+        "api-key": { type: "string" },
         agent: { type: "string", multiple: true },
+        all: { type: "boolean", default: false },
+        print: { type: "boolean", default: false },
+        "dry-run": { type: "boolean", default: false },
         "no-open": { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", short: "v", default: false },
@@ -142,56 +253,56 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  // The key is typed into a masked prompt, never passed through an agent's tool output.
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    process.stderr.write(
-      "wopee-init asks for your API key, so run it in your own terminal, not through a coding agent:\n\n  npx -y @wopee-io/init --manual\n",
-    );
-    return 2;
-  }
-
-  clack.intro(`Wopee.io setup · @wopee-io/init ${version}`);
-  if (!args.manual) {
-    clack.log.info(
-      "Browser pairing is not available yet, so this uses --manual.",
-    );
-  }
-  installProxy(process.env);
-
   try {
-    await run(
-      {
-        cwd: process.cwd(),
-        home: homedir(),
-        env: process.env,
-        version,
-        apiUrl: args["api-url"],
-        cmdUrl: args["cmd-url"],
-        project: args.project,
-        agents: args.agent,
-        open: !args["no-open"],
-      },
-      ui,
-    );
-    clack.outro("Done.");
+    const clash = (a: string, b: string) => {
+      throw new InitError("usage", `${a} and ${b} cannot be used together.`);
+    };
+    if (args.manual && args.resume) clash("--manual", "--resume");
+    if (args.manual && args["api-key"]) clash("--manual", "--api-key");
+    if ((args.print || args["dry-run"]) && args.resume)
+      clash(args.print ? "--print" : "--dry-run", "--resume");
+
+    // --manual types the key into a masked prompt, which needs a terminal.
+    if (args.manual && !tty) {
+      throw new InitError(
+        "no_tty",
+        "--manual asks for your API key in a hidden prompt, so run it in your own terminal, not through a coding agent. From an agent, run it without --manual to pair through the browser.",
+      );
+    }
+
+    const interactive = interaction === "interactive";
+    if (interactive) clack.intro(`Wopee.io setup · @wopee-io/init ${version}`);
+    installProxy(process.env, interactive ? (m) => clack.log.info(m) : say);
+
+    const options: RunOptions = {
+      cwd: process.cwd(),
+      home: homedir(),
+      env: process.env,
+      version,
+      apiUrl: args["api-url"],
+      cmdUrl: args["cmd-url"],
+      project: args.project,
+      agents: args.agent,
+      open: !args["no-open"],
+      mode: args.manual ? "manual" : "pair",
+      interaction,
+      apiKey: args["api-key"],
+      resume: args.resume,
+      wait: !args["no-wait"],
+      dryRun: args["dry-run"],
+      print: args.print,
+      all: args.all,
+      callingAgent: callingAgentFromName(
+        detected.isAgent ? detected.agent.name : undefined,
+      ),
+    };
+    await run(options, interactive ? interactiveUi : machineUi);
+    if (interactive) clack.outro("Done.");
     return 0;
   } catch (error) {
-    if (error instanceof InitError) {
-      if (error.code === "cancelled") clack.cancel(redact(error.message));
-      else {
-        clack.log.error(redact(error.message));
-        clack.outro("Setup did not finish.");
-      }
-      return error.exitCode;
-    }
-    clack.log.error(
-      redact(`Unexpected error: ${(error as Error)?.message ?? String(error)}`),
-    );
-    clack.outro(
-      "Setup did not finish. Nothing secret was printed; report this at https://github.com/Wopee-io/wopee-init/issues",
-    );
-    return 1;
+    return report(error, interaction);
   }
 }
 
+// exitCode, not exit(): stdout is a pipe under an agent, and exit() could drop the last JSON line.
 process.exitCode = await main();

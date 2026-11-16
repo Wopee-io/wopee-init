@@ -6,25 +6,16 @@ import type { AgentContext, AgentId, AgentTarget } from "./agents/table.ts";
 import type { ConfigPlan } from "./agents/plan.ts";
 import { planJsonEntry } from "./agents/writeJson.ts";
 import { planCodexEntry } from "./agents/writeToml.ts";
+import { acquireCredentials } from "./credentials.ts";
+import type { CredentialSource, Credentials } from "./credentials.ts";
 import { chooseEnvFile, planEnvFile, readRepoEnv } from "./envFile.ts";
 import type { EnvKey } from "./envFile.ts";
 import { InitError } from "./errors.ts";
 import { readTextIfExists, writeFileAtomic } from "./files.ts";
 import { appendIgnore, gitRoot, isIgnored, isTracked } from "./git.ts";
-import {
-  isProjectUuid,
-  parsePasted,
-  validateApiKey,
-  validateProjectUuid,
-} from "./input.ts";
-import {
-  apiKeysPageUrl,
-  DEFAULT_API_URL,
-  resolveApiUrl,
-  resolveCmdUrl,
-} from "./instance.ts";
-import { registerSecret } from "./redact.ts";
-import { smokeTest } from "./smoke.ts";
+import { isProjectUuid, validateProjectUuid } from "./input.ts";
+import { DEFAULT_API_URL, resolveApiUrl } from "./instance.ts";
+import type { Clock } from "./pairing.ts";
 
 export interface Ui {
   info(message: string): void;
@@ -48,7 +39,12 @@ export interface Ui {
     initialValues: AgentId[],
   ): Promise<AgentId[]>;
   withSpinner<T>(message: string, task: () => Promise<T>): Promise<T>;
+  /** One machine-readable event, printed as a JSON line in agent mode and ignored otherwise. */
+  event?(event: Record<string, unknown>): void;
 }
+
+/** Who is at the other end: a person at a terminal, a coding agent, or a CI job. */
+export type Interaction = "interactive" | "agent" | "ci";
 
 export interface RunOptions {
   cwd: string;
@@ -61,22 +57,55 @@ export interface RunOptions {
   agents?: string[];
   open: boolean;
   fetchImpl?: typeof fetch;
+  /** How to get a key when none is at hand: browser pairing, or pasting it. Defaults to "manual". */
+  mode?: "pair" | "manual";
+  interaction?: Interaction;
+  /** `--api-key`: use this key instead of pairing. */
+  apiKey?: string;
+  /** Pick up a pairing a previous run handed back. */
+  resume?: boolean;
+  /** Agent mode: false hands back as soon as the link is shown (`--no-wait`). */
+  wait?: boolean;
+  /** Agent mode: how long to wait for the approval before handing back. */
+  waitSeconds?: number;
+  dryRun?: boolean;
+  print?: boolean;
+  /** Configure every supported agent. */
+  all?: boolean;
+  /** The coding agent running this, when one was detected. */
+  callingAgent?: { slug: string; id?: AgentId };
+  host?: string;
+  clock?: Clock;
 }
 
 export interface RunResult {
-  projectUuid: string;
+  /** Null for `--dry-run` and `--print`, which never fetch a key. */
+  projectUuid: string | null;
   apiUrl: string;
-  analyses: number;
+  analyses: number | null;
   /** Absolute paths of the files written; empty when everything was already set up. */
   written: string[];
+  /** The same, relative to the repository (or `~/` for files in the home directory). */
+  files: string[];
+  skipped: { file: string; reason: string }[];
+  agents: { id: AgentId; restart: string }[];
+  credentials: CredentialSource | null;
 }
 
 interface FileChange {
   path: string;
   label: string;
-  next: string;
+  /** The whole new text; absent only in a dry run, for the env file whose key is not fetched. */
+  next?: string;
   private?: boolean;
+  /** An agent's config: a write the system refuses is skipped instead of failing the run. */
+  agent?: AgentTarget;
 }
+
+/** An agent's own default wait in its shell tool is 120 s; hand back well inside it. */
+export const AGENT_WAIT_SECONDS = 90;
+const FIRST_PROMPT = "Run a Wopee analysis of <your app URL>";
+const WRITE_REFUSED = new Set(["EACCES", "EPERM", "EROFS"]);
 
 const display = (root: string, home: string, path: string) => {
   const rel = relative(root, path);
@@ -105,126 +134,147 @@ function planAgent(agent: AgentTarget, ctx: AgentContext): ConfigPlan {
     : planCodexEntry(path, text);
 }
 
+/** The key-free MCP snippet for one agent, as it would sit in the agent's config file. */
+function agentSnippet(agent: AgentTarget, ctx: AgentContext): string {
+  if (agent.format === "toml")
+    return planCodexEntry(agent.file(ctx), null).next;
+  const nested = agent.jsonPath.reduceRight<unknown>(
+    (inner, key) => ({ [key]: inner }),
+    agent.entry(ctx),
+  );
+  return `${JSON.stringify(nested, null, 2)}\n`;
+}
+
+/**
+ * The command a handed-back pairing continues with. It repeats this run's api and agent choices,
+ * so the resumed run targets the same instance and configures the same agents.
+ */
+function resumeCommand(options: RunOptions, apiUrl: string): string {
+  const parts = ["npx -y @wopee-io/init"];
+  if (apiUrl !== DEFAULT_API_URL) parts.push(`--api-url ${apiUrl}`);
+  for (const agent of options.agents ?? []) parts.push(`--agent ${agent}`);
+  if (options.all) parts.push("--all");
+  parts.push("--resume");
+  return parts.join(" ");
+}
+
 export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
+  const interaction = options.interaction ?? "interactive";
+  const interactive = interaction === "interactive";
   const gitTop = gitRoot(options.cwd);
   const root = gitTop ?? options.cwd;
   const repoEnv = readRepoEnv(root);
 
-  // 1. Instance and the API Keys page.
   const apiUrl = resolveApiUrl({
     flag: options.apiUrl,
     env: options.env.WOPEE_API_URL,
     envFile: repoEnv.WOPEE_API_URL,
   });
-  const cmdUrl = resolveCmdUrl(apiUrl, options.cmdUrl);
-
   if (options.project !== undefined && validateProjectUuid(options.project)) {
     throw new InitError(
       "usage",
       `--project is not a project UUID: ${options.project}`,
     );
   }
+  const project = options.project?.trim();
   const known = [
-    options.project,
+    project,
     options.env.WOPEE_PROJECT_UUID,
     repoEnv.WOPEE_PROJECT_UUID,
   ]
     .map((v) => v?.trim())
     .find(isProjectUuid);
 
-  const page = apiKeysPageUrl(cmdUrl, known);
-  ui.info(
-    known
-      ? "Generate an API key on your project's API Keys page in Wopee.io Commander (project admins):"
-      : "Open your project in Wopee.io Commander, then More › Settings › API Keys (project admins). Copy WOPEE_PROJECT_UUID, generate a key and copy WOPEE_API_KEY:",
-  );
-  ui.link(page);
-  if (options.open) ui.openUrl(page);
-
-  // 2. The two values. The key is masked and registered for redaction right away.
-  const projectUuid = parsePasted(
-    "WOPEE_PROJECT_UUID",
-    await ui.askText({
-      message: "Project UUID",
-      initialValue: known,
-      validate: validateProjectUuid,
-    }),
-  );
-
-  let apiKey: string | undefined;
-  if (repoEnv.WOPEE_API_KEY && repoEnv.WOPEE_PROJECT_UUID === projectUuid) {
-    registerSecret(repoEnv.WOPEE_API_KEY);
-    if (
-      await ui.confirm(
-        "Keep the API key that is already in the env file?",
-        true,
-      )
-    ) {
-      apiKey = repoEnv.WOPEE_API_KEY;
-    }
-  }
-  if (!apiKey) {
-    apiKey = parsePasted(
-      "WOPEE_API_KEY",
-      await ui.askSecret({
-        message: "API key (input hidden)",
-        validate: validateApiKey,
-      }),
-    );
-  }
-  registerSecret(apiKey);
-
-  // 3. Prove the key works for the project before anything is written.
-  const { analyses } = await ui.withSpinner(
-    `Checking the key with ${apiUrl}`,
-    () =>
-      smokeTest(
-        apiUrl,
-        projectUuid,
-        apiKey,
-        `wopee-init/${options.version}`,
-        options.fetchImpl,
-      ),
-  );
-
-  // 4. Plan every change.
   const envFile = chooseEnvFile(root);
   const envPath = join(root, envFile);
   const ctx: AgentContext = { root, home: options.home, envFile };
   const show = (path: string) => display(root, options.home, path);
 
-  const desired: Partial<Record<EnvKey, string>> = {
-    WOPEE_API_KEY: apiKey,
-    WOPEE_PROJECT_UUID: projectUuid,
-  };
-  if (apiUrl !== DEFAULT_API_URL || repoEnv.WOPEE_API_URL)
-    desired.WOPEE_API_URL = apiUrl;
-  const envPlan = planEnvFile(root, envFile, desired);
-  if (envPlan.conflicts.length) {
-    const names = envPlan.conflicts.join(", ");
-    if (
-      !(await ui.confirm(
-        `${envFile} already has a different ${names}. Replace it?`,
-        false,
-      ))
-    ) {
-      throw new InitError(
-        "conflict",
-        `Kept ${envFile} as it is. Nothing was written.`,
-      );
+  const detected = AGENTS.filter((a) => a.detect(ctx)).map((a) => a.id);
+  /** The agents to configure. Interactive runs ask unless `--agent` or `--all` decided it. */
+  const chooseAgents = async (): Promise<AgentTarget[]> => {
+    if (options.agents?.length) return selectedAgents(options.agents);
+    if (options.all) return [...AGENTS];
+    if (!interactive) {
+      const calling = options.callingAgent?.id;
+      const ids = new Set<AgentId>(detected);
+      if (calling) ids.add(calling);
+      return AGENTS.filter((a) => ids.has(a.id));
     }
+    return selectedAgents(
+      await ui.selectAgents(
+        AGENTS.map((a) => ({
+          value: a.id,
+          label: a.name,
+          hint: `${show(a.file(ctx))}${detected.includes(a.id) ? ", detected" : ""}`,
+        })),
+        detected,
+      ),
+    );
+  };
+
+  // --print: the snippets to paste by hand. No key is fetched, so none can be lost or shown.
+  if (options.print) {
+    const agents = await chooseAgents();
+    const names: EnvKey[] = ["WOPEE_API_KEY", "WOPEE_PROJECT_UUID"];
+    if (apiUrl !== DEFAULT_API_URL) names.push("WOPEE_API_URL");
+    const snippets = agents.map((a) => ({
+      agent: a.id,
+      file: show(a.file(ctx)),
+      snippet: agentSnippet(a, ctx),
+    }));
+    ui.info(
+      `Put ${names.join(", ")} in a git-ignored ${envFile}: the project UUID and a key from your project's API Keys page in Wopee.io Commander.`,
+    );
+    for (const s of snippets)
+      ui.info(`${s.file} (${agentById(s.agent)!.name}):\n${s.snippet}`);
+    ui.event?.({ status: "print", env: names, env_file: envFile, snippets });
+    return emptyResult(apiUrl);
   }
 
+  // Preflight: nothing below may mint a key that then cannot be written.
+  if (gitTop && isTracked(root, envFile)) {
+    throw new InitError(
+      "unsafe_env_file",
+      `${envFile} is tracked by git, so a key written there would be committed. Run \`git rm --cached ${envFile}\`, commit, and run this again. Nothing was written.`,
+    );
+  }
+
+  // 1. The credentials. A dry run never fetches a key.
+  let creds: Credentials | null = null;
+  if (!options.dryRun) {
+    creds = await acquireCredentials({
+      ui,
+      root,
+      apiUrl,
+      repoEnv,
+      env: options.env,
+      known,
+      project,
+      interactive,
+      ci: interaction === "ci",
+      mode: options.mode ?? "manual",
+      version: options.version,
+      cmdUrl: options.cmdUrl,
+      apiKey: options.apiKey,
+      resume: !!options.resume,
+      wait: options.wait !== false,
+      waitSeconds: options.waitSeconds ?? AGENT_WAIT_SECONDS,
+      open: options.open,
+      agentSlug: options.callingAgent?.slug ?? "terminal",
+      host: options.host,
+      resumeCommand: resumeCommand(options, apiUrl),
+      clock: options.clock,
+      fetchImpl: options.fetchImpl,
+    });
+  }
+
+  // 2. Plan every change.
   const changes: FileChange[] = [];
+  const skipped: RunResult["skipped"] = [];
   const gitignorePath = join(root, ".gitignore");
   let gitignoreBefore: string | null = null;
   if (gitTop) {
-    if (isTracked(root, envFile)) {
-      throw new InitError(
-        "unsafe_env_file",
-        `${envFile} is tracked by git, so a key written there would be committed. Run \`git rm --cached ${envFile}\`, commit, and run this again. Nothing was written.`,
-      );
-    }
     if (!isIgnored(root, envFile)) {
       gitignoreBefore = readTextIfExists(gitignorePath);
       changes.push({
@@ -238,29 +288,50 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
       `This folder is not a git repository. Make sure ${envFile} is never committed.`,
     );
   }
-  if (envPlan.changed) {
+
+  const withUrl = apiUrl !== DEFAULT_API_URL || !!repoEnv.WOPEE_API_URL;
+  if (creds) {
+    const desired: Partial<Record<EnvKey, string>> = {
+      WOPEE_API_KEY: creds.apiKey,
+      WOPEE_PROJECT_UUID: creds.projectUuid,
+    };
+    if (withUrl) desired.WOPEE_API_URL = apiUrl;
+    const envPlan = planEnvFile(root, envFile, desired);
+    if (envPlan.conflicts.length) {
+      const names = envPlan.conflicts.join(", ");
+      if (interactive) {
+        if (
+          !(await ui.confirm(
+            `${envFile} already has a different ${names}. Replace it?`,
+            false,
+          ))
+        ) {
+          throw new InitError(
+            "conflict",
+            `Kept ${envFile} as it is. Nothing was written.`,
+          );
+        }
+      } else {
+        // The old value failed the reuse check, or --project asked for another project.
+        ui.info(`Replacing ${names} in ${envFile}.`);
+      }
+    }
+    if (envPlan.changed) {
+      changes.push({
+        path: envPath,
+        label: "Wopee.io credentials",
+        next: envPlan.next,
+        private: true,
+      });
+    }
+  } else {
     changes.push({
       path: envPath,
-      label: "Wopee.io credentials",
-      next: envPlan.next,
-      private: true,
+      label: `Wopee.io credentials: ${["WOPEE_API_KEY", "WOPEE_PROJECT_UUID", ...(withUrl ? ["WOPEE_API_URL"] : [])].join(", ")}`,
     });
   }
 
-  const detected = AGENTS.filter((a) => a.detect(ctx)).map((a) => a.id);
-  const agents = options.agents?.length
-    ? selectedAgents(options.agents)
-    : selectedAgents(
-        await ui.selectAgents(
-          AGENTS.map((a) => ({
-            value: a.id,
-            label: a.name,
-            hint: `${show(a.file(ctx))}${detected.includes(a.id) ? ", detected" : ""}`,
-          })),
-          detected,
-        ),
-      );
-
+  const agents = await chooseAgents();
   const configured: AgentTarget[] = [];
   for (const agent of agents) {
     let plan: ConfigPlan;
@@ -269,9 +340,19 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
     } catch (error) {
       if (!(error instanceof InitError)) throw error;
       ui.warn(`Skipped ${agent.name}: ${error.message}`);
+      skipped.push({ file: show(agent.file(ctx)), reason: error.message });
       continue;
     }
     if (plan.status === "conflict") {
+      if (!interactive) {
+        // Someone set this server up on purpose; an agent run does not overwrite it.
+        ui.warn(`Kept the different \`wopee\` server in ${show(plan.path)}.`);
+        skipped.push({
+          file: show(plan.path),
+          reason: "it already has a different wopee server; left as it is",
+        });
+        continue;
+      }
       ui.info(
         `${show(plan.path)} already has a different \`wopee\` server:\n${plan.existing}`,
       );
@@ -290,12 +371,28 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
         path: plan.path,
         label: `${agent.name} MCP server`,
         next: plan.next,
+        agent,
       });
     }
   }
 
-  // 5. Write: .gitignore first, so the key never lands in a file git would pick up.
-  if (changes.length) {
+  // --dry-run: say what would change and stop.
+  if (options.dryRun) {
+    const listed = changes.map((c) => ({
+      file: show(c.path),
+      change: c.label,
+    }));
+    ui.info(
+      listed.length
+        ? `Would write:\n${listed.map((c) => `  • ${c.file} (${c.change})`).join("\n")}`
+        : "Nothing would change.",
+    );
+    ui.event?.({ status: "dry_run", changes: listed, skipped });
+    return { ...emptyResult(apiUrl), skipped };
+  }
+
+  // 3. Write: .gitignore first, so the key never lands in a file git would pick up.
+  if (changes.length && interactive) {
     ui.info(
       `About to write:\n${changes.map((c) => `  • ${show(c.path)} (${c.label})`).join("\n")}`,
     );
@@ -306,7 +403,22 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
 
   const written: string[] = [];
   for (const change of changes) {
-    writeFileAtomic(change.path, change.next, { private: change.private });
+    try {
+      writeFileAtomic(change.path, change.next!, { private: change.private });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (!change.agent || !code || !WRITE_REFUSED.has(code)) throw error;
+      // A sandboxed agent may not write outside the workspace (Codex's config lives in ~).
+      ui.warn(
+        `Could not write ${show(change.path)} (${code}); skipped ${change.agent.name}.`,
+      );
+      skipped.push({
+        file: show(change.path),
+        reason: `not allowed to write it (${code})`,
+      });
+      configured.splice(configured.indexOf(change.agent), 1);
+      continue;
+    }
     written.push(change.path);
     if (change.path === gitignorePath && !isIgnored(root, envFile)) {
       // A later rule (e.g. `!.env`) wins over ours: undo and stop before the key is written.
@@ -319,19 +431,55 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
     }
   }
 
-  // 6. Report.
+  // 4. Report.
+  const { projectUuid, analyses } = creds!;
+  const where = apiUrl === DEFAULT_API_URL ? "" : ` on ${apiUrl}`;
   ui.success(
-    `Connected to project ${projectUuid}${apiUrl === DEFAULT_API_URL ? "" : ` on ${apiUrl}`}: ${analyses} ${analyses === 1 ? "analysis" : "analyses"} found.`,
+    analyses === null
+      ? `Connected to project ${projectUuid}${where}.`
+      : `Connected to project ${projectUuid}${where}: ${analyses} ${analyses === 1 ? "analysis" : "analyses"} found.`,
   );
   if (!written.length) ui.info("Already set up: nothing changed.");
   for (const agent of configured)
     ui.info(`${agent.name}: ${agent.restartHint}.`);
-  if (configured.length)
-    ui.info('Then ask your agent: "Run a Wopee analysis of <your app URL>"');
+  if (configured.length) ui.info(`Then ask your agent: "${FIRST_PROMPT}"`);
   else
     ui.info(
       `No agent configured. Run again with --agent <${AGENTS.map((a) => a.id).join("|")}>.`,
     );
 
-  return { projectUuid, apiUrl, analyses, written };
+  const result: RunResult = {
+    projectUuid,
+    apiUrl,
+    analyses,
+    written,
+    files: written.map(show),
+    skipped,
+    agents: configured.map((a) => ({ id: a.id, restart: a.restartHint })),
+    credentials: creds!.source,
+  };
+  ui.event?.({
+    status: "success",
+    project_uuid: projectUuid,
+    api_url: apiUrl,
+    analyses,
+    files: result.files,
+    skipped,
+    agents: result.agents,
+    first_prompt: configured.length ? FIRST_PROMPT : null,
+  });
+  return result;
+}
+
+function emptyResult(apiUrl: string): RunResult {
+  return {
+    projectUuid: null,
+    apiUrl,
+    analyses: null,
+    written: [],
+    files: [],
+    skipped: [],
+    agents: [],
+    credentials: null,
+  };
 }

@@ -1,12 +1,10 @@
 import { InitError } from "./errors.ts";
+import { networkError, TIMEOUT_MS } from "./http.ts";
 import { redact, registerSecret } from "./redact.ts";
 
 const QUERY = `query WopeeInitSmoke($projectUuid: ID!) {
   fetchAnalysisSuites(projectUuid: $projectUuid) { uuid }
 }`;
-
-const TIMEOUT_MS = 30_000;
-const TLS_CODES = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER/;
 
 const INVALID_CREDENTIALS =
   "Wopee.io refused this API key for this project. The key and the project UUID must come from the same project: generate a new key on the API Keys page and try again.";
@@ -14,12 +12,6 @@ const INVALID_CREDENTIALS =
 interface GraphQLError {
   message?: string;
   extensions?: { code?: string };
-}
-
-function errorCode(error: unknown): string {
-  const cause = (error as { cause?: { code?: string; message?: string } })
-    ?.cause;
-  return `${cause?.code ?? ""} ${cause?.message ?? ""}`;
 }
 
 /**
@@ -49,21 +41,7 @@ export async function smokeTest(
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
-    const code = errorCode(error);
-    if (TLS_CODES.test(code)) {
-      throw new InitError(
-        "network",
-        `Could not verify the TLS certificate of ${apiUrl} (${code.trim()}). Behind a company proxy, set NODE_EXTRA_CA_CERTS to the company root certificate and run this again.`,
-      );
-    }
-    const reason =
-      (error as Error)?.name === "TimeoutError"
-        ? "timed out"
-        : code.trim() || String(error);
-    throw new InitError(
-      "network",
-      redact(`Could not reach ${apiUrl}: ${reason}`),
-    );
+    throw networkError(apiUrl, error);
   }
 
   let body:
