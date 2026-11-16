@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { rmSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,8 +35,23 @@ const FILE = "wopee-init-pairing.json";
 export function pairingStatePath(root: string): string {
   const dir = gitDir(root);
   if (dir) return join(dir, FILE);
-  const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  const id = createHash("sha256")
+    .update(canonicalPath(root))
+    .digest("hex")
+    .slice(0, 16);
   return join(tmpdir(), `wopee-init-${id}.json`);
+}
+
+/**
+ * One spelling per folder, so the run that hands back and the one that resumes find the same
+ * file: symlinks resolved, and on Windows 8.3 short names (`RUNNER~1`) expanded.
+ */
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
 }
 
 export function saveState(path: string, state: PairingState): void {
