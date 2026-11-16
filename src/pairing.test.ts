@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -392,8 +393,9 @@ test("state: lives inside the git directory, never in the work tree", () => {
   gitIn(repo, "init", "-q");
   const path = pairingStatePath(repo);
   assert.equal(
-    realpathSync(join(path, "..")),
-    realpathSync(join(repo, ".git")),
+    // .native expands Windows 8.3 short names (RUNNER~1) the way git spells the path.
+    realpathSync.native(join(path, "..")),
+    realpathSync.native(join(repo, ".git")),
   );
   saveState(path, state());
   assert.equal(
@@ -437,6 +439,18 @@ test("state: outside git it goes to the temp dir, one file per folder", () => {
   assert.notEqual(pairingStatePath(a), pairingStatePath(b));
   assert.ok(pairingStatePath(a).startsWith(tmpdir()));
 });
+
+test(
+  "state: outside git, the same folder reached through a link finds the same pairing",
+  { skip: process.platform === "win32" },
+  () => {
+    const real = join(base, "real");
+    const link = join(base, "link");
+    mkdirSync(real);
+    symlinkSync(real, link);
+    assert.equal(pairingStatePath(link), pairingStatePath(real));
+  },
+);
 
 test("state: saved private, read back, cleared", () => {
   const path = join(base, "state.json");
