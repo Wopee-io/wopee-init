@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/Wopee-io/wopee-init/compare/v1.1.0...v1.1.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* run wopee-mcp@latest, so a stale npx cache cannot win ([9388f16](https://github.com/Wopee-io/wopee-init/commit/9388f16e3c574846c87676644fd2b61293362568))
+
 # [1.1.0](https://github.com/Wopee-io/wopee-init/compare/v1.0.0...v1.1.0) (2026-11-16)
 
 
