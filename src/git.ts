@@ -18,6 +18,15 @@ export function gitRoot(cwd: string): string | null {
   return ok && stdout ? stdout : null;
 }
 
+/**
+ * The repository's git directory as an absolute path. In a worktree `.git` is a file pointing
+ * elsewhere, so this asks git rather than joining `.git` onto the root.
+ */
+export function gitDir(cwd: string): string | null {
+  const { ok, stdout } = git(cwd, ["rev-parse", "--absolute-git-dir"]);
+  return ok && stdout ? stdout : null;
+}
+
 /** Whether git tracks the file: a tracked file stays in git even when .gitignore lists it. */
 export function isTracked(root: string, relPath: string): boolean {
   return git(root, ["ls-files", "--error-unmatch", "--", relPath]).ok;

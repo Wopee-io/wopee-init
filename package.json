@@ -50,7 +50,9 @@
   "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^1.9.0",
+    "@vercel/detect-agent": "^1.2.7",
     "jsonc-parser": "^3.3.1",
+    "libsodium-wrappers": "^0.8.4",
     "undici": "^7.18.2"
   },
   "devDependencies": {
