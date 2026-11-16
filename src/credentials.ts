@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { basename } from "node:path";
 
 import type { EnvKey } from "./envFile.ts";
-import { InitError } from "./errors.ts";
+import { INIT_COMMAND, InitError } from "./errors.ts";
 import {
   isProjectUuid,
   parsePasted,
@@ -69,7 +69,6 @@ export interface CredentialContext {
 }
 
 const userAgent = (ctx: CredentialContext) => `wopee-init/${ctx.version}`;
-const RUN_AGAIN = "npx -y @wopee-io/init";
 
 export async function acquireCredentials(
   ctx: CredentialContext,
@@ -224,14 +223,14 @@ async function paired(ctx: CredentialContext): Promise<Credentials> {
       throw new InitError(
         "no_pairing",
         "There is no pairing waiting in this folder. Run the command without --resume to start one.",
-        RUN_AGAIN,
+        INIT_COMMAND,
       );
     }
     if (saved.apiUrl !== ctx.apiUrl) {
       throw new InitError(
         "no_pairing",
         `The pairing waiting here is for ${saved.apiUrl}, not ${ctx.apiUrl}.`,
-        `${RUN_AGAIN} --api-url ${saved.apiUrl} --resume`,
+        `${INIT_COMMAND} --api-url ${saved.apiUrl} --resume`,
       );
     }
     if (clock.now() >= saved.expiresAt) {
@@ -253,7 +252,7 @@ async function paired(ctx: CredentialContext): Promise<Credentials> {
       throw new InitError(
         "pairing_unavailable",
         `${discovery.reason} Run the manual setup in your own terminal: it asks for the key in a hidden prompt, so the key never passes through an agent.`,
-        `${RUN_AGAIN} --manual`,
+        `${INIT_COMMAND} --manual`,
       );
     }
     const keys = await generateKeyPair();
@@ -344,7 +343,7 @@ async function paired(ctx: CredentialContext): Promise<Credentials> {
     throw new InitError(
       "pairing_denied",
       "The request was denied in Wopee.io Commander. No key was created.",
-      RUN_AGAIN,
+      INIT_COMMAND,
     );
   }
   if (result.status === "expired") {
@@ -360,7 +359,7 @@ async function paired(ctx: CredentialContext): Promise<Credentials> {
     throw new InitError(
       "api_error",
       "The key Wopee.io sent could not be opened with this pairing's key. Run the command again.",
-      RUN_AGAIN,
+      INIT_COMMAND,
     );
   }
   registerSecret(apiKey);
@@ -403,6 +402,6 @@ function expired(): InitError {
   return new InitError(
     "pairing_expired",
     "The pairing request expired before it was approved (it lasts 10 minutes). Run the command again to start a new one.",
-    RUN_AGAIN,
+    INIT_COMMAND,
   );
 }

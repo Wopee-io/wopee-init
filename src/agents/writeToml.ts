@@ -1,15 +1,20 @@
 import { InitError } from "../errors.ts";
 import type { ConfigPlan } from "./plan.ts";
-import { MCP_ARGS, MCP_COMMAND, SERVER_NAME } from "./table.ts";
+import {
+  LEGACY_MCP_ARGS,
+  MCP_ARGS,
+  MCP_COMMAND,
+  SERVER_NAME,
+} from "./table.ts";
 
 const TABLE = `mcp_servers.${SERVER_NAME}`;
 const HEADER_RE = /^\s*\[\s*([^\]\s][^\]]*?)\s*\]\s*(#.*)?$/;
 
-const blockLines = (eol: string) =>
+const blockLines = (eol: string, args: readonly string[] = MCP_ARGS) =>
   [
     `[${TABLE}]`,
     `command = ${JSON.stringify(MCP_COMMAND)}`,
-    `args = [${MCP_ARGS.map((a) => JSON.stringify(a)).join(", ")}]`,
+    `args = [${args.map((a) => JSON.stringify(a)).join(", ")}]`,
   ].join(eol);
 
 // `mcp_servers."wopee"` and `mcp_servers . wopee` name the same table.
@@ -78,10 +83,10 @@ export function planCodexEntry(path: string, text: string | null): ConfigPlan {
   while (end - 1 > start && /^\s*(#.*)?$/.test(lines[end - 1])) end--;
   const block = lines.slice(start, end);
   // The header was matched by name already; compare the key = value lines below it.
-  if (
-    significant(block.slice(1)).join("\n") ===
-    significant(desired.split(eol).slice(1)).join("\n")
-  ) {
+  const body = (blockText: string) =>
+    significant(blockText.split(eol).slice(1)).join("\n");
+  const existingBody = significant(block.slice(1)).join("\n");
+  if (existingBody === body(desired)) {
     return { path, status: "same", next: current };
   }
 
@@ -89,6 +94,10 @@ export function planCodexEntry(path: string, text: string | null): ConfigPlan {
     [...lines.slice(0, start), ...desired.split(eol), ...lines.slice(end)].join(
       eol,
     ) + eol;
+  // The table an older init wrote is ours: upgrade it without asking.
+  if (existingBody === body(blockLines(eol, LEGACY_MCP_ARGS))) {
+    return { path, status: "update", next };
+  }
   const existing = block
     .join("\n")
     .replace(/((?:KEY|TOKEN|SECRET)[A-Z_]*\s*=\s*)"[^"]*"/gi, '$1"********"');

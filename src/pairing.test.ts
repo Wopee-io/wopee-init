@@ -176,7 +176,7 @@ test("start: pairing switched off on the api points at --manual", async () => {
     ),
     (error: InitError) => {
       assert.equal(error.code, "pairing_unavailable");
-      assert.equal(error.next, "npx -y @wopee-io/init --manual");
+      assert.equal(error.next, "npx -y @wopee-io/init@latest --manual");
       return true;
     },
   );

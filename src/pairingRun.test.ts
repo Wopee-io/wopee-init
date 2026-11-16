@@ -300,7 +300,7 @@ test("a slow approval hands back with the link, and --resume finishes the same p
   const error = await rejectsWith(run(options(api), first), "action_required");
 
   assert.equal(error.exitCode, 75);
-  assert.equal(error.next, "npx -y @wopee-io/init --resume");
+  assert.equal(error.next, "npx -y @wopee-io/init@latest --resume");
   assert.equal(error.details?.reason, "approve_in_commander");
   assert.equal(
     error.details?.verification_url,
@@ -362,7 +362,7 @@ test("the resume command repeats a non-default api and the chosen agents", async
   );
   assert.equal(
     error.next,
-    "npx -y @wopee-io/init --api-url https://api.dev.wopee.io --agent cursor --resume",
+    "npx -y @wopee-io/init@latest --api-url https://api.dev.wopee.io --agent cursor --resume",
   );
 });
 
@@ -389,7 +389,10 @@ test("--resume with nothing waiting, or for another api, says so", async () => {
     ),
     "no_pairing",
   );
-  assert.equal(error.next, `npx -y @wopee-io/init --api-url ${API} --resume`);
+  assert.equal(
+    error.next,
+    `npx -y @wopee-io/init@latest --api-url ${API} --resume`,
+  );
 });
 
 // ---------------------------------------------------------------- refusals
@@ -507,7 +510,7 @@ test("an api without pairing: agent mode points at --manual in the user's own te
     run(options(fakeApi({ info: "csrf" })), machineUi()),
     "pairing_unavailable",
   );
-  assert.equal(error.next, "npx -y @wopee-io/init --manual");
+  assert.equal(error.next, "npx -y @wopee-io/init@latest --manual");
 });
 
 test("an api without pairing: an interactive run falls back to pasting the key", async () => {
