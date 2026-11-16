@@ -78,6 +78,8 @@ export interface RunOptions {
   print?: boolean;
   /** Configure every supported agent. */
   all?: boolean;
+  /** Write only the env file: an agent plugin already brings the MCP server. */
+  envOnly?: boolean;
   /** The coding agent running this, when one was detected. */
   callingAgent?: { slug: string; id?: AgentId };
   host?: string;
@@ -166,6 +168,7 @@ function resumeCommand(options: RunOptions, apiUrl: string): string {
   if (apiUrl !== DEFAULT_API_URL) parts.push(`--api-url ${apiUrl}`);
   for (const agent of options.agents ?? []) parts.push(`--agent ${agent}`);
   if (options.all) parts.push("--all");
+  if (options.envOnly) parts.push("--env-only");
   parts.push("--resume");
   return parts.join(" ");
 }
@@ -205,6 +208,7 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
   const detected = AGENTS.filter((a) => a.detect(ctx)).map((a) => a.id);
   /** The agents to configure. Interactive runs ask unless `--agent` or `--all` decided it. */
   const chooseAgents = async (): Promise<AgentTarget[]> => {
+    if (options.envOnly) return [];
     if (options.agents?.length) return selectedAgents(options.agents);
     if (options.all) return [...AGENTS];
     if (!interactive) {
@@ -454,7 +458,13 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
   if (!written.length) ui.info("Already set up: nothing changed.");
   for (const agent of configured)
     ui.info(`${agent.name}: ${agent.restartHint}.`);
-  if (configured.length) ui.info(`Then ask your agent: "${FIRST_PROMPT}"`);
+  // With --env-only the agent's plugin provides the server, so the setup is complete.
+  const ready = configured.length > 0 || Boolean(options.envOnly);
+  if (options.envOnly)
+    ui.info(
+      "The Wopee.io plugin's server reads the key on its next call: no restart needed.",
+    );
+  if (ready) ui.info(`Then ask your agent: "${FIRST_PROMPT}"`);
   else
     ui.info(
       `No agent configured. Run again with --agent <${AGENTS.map((a) => a.id).join("|")}>.`,
@@ -478,7 +488,7 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
     files: result.files,
     skipped,
     agents: result.agents,
-    first_prompt: configured.length ? FIRST_PROMPT : null,
+    first_prompt: ready ? FIRST_PROMPT : null,
   });
   return result;
 }

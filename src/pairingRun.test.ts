@@ -366,6 +366,15 @@ test("the resume command repeats a non-default api and the chosen agents", async
   );
 });
 
+test("the resume command keeps --env-only", async () => {
+  const api = fakeApi({ statuses: ["pending"] });
+  const error = await rejectsWith(
+    run(options(api, { envOnly: true }), machineUi()),
+    "action_required",
+  );
+  assert.equal(error.next, "npx -y @wopee-io/init@latest --env-only --resume");
+});
+
 test("--resume with nothing waiting, or for another api, says so", async () => {
   await rejectsWith(
     run(options(fakeApi(), { resume: true }), machineUi()),

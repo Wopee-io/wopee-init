@@ -169,6 +169,48 @@ test("fresh repo: opens the start page, writes a git-ignored .env and key-free M
   assert.doesNotMatch(git("status", "--porcelain"), /\.env\b(?!\.)/);
 });
 
+test("--env-only writes the git-ignored .env and no MCP config", async () => {
+  // Claude Code is detected, so without --env-only it would get a .mcp.json.
+  writeFileSync(join(repo, "CLAUDE.md"), "# repo\n");
+  const ui = fakeUi({ uuid: UUID });
+  const result = await run(options({ envOnly: true }), ui);
+
+  assert.equal(
+    read(join(repo, ".env")),
+    `WOPEE_API_KEY=${GOOD_KEY}\nWOPEE_PROJECT_UUID=${UUID}\n`,
+  );
+  assert.equal(git("check-ignore", ".env"), ".env");
+  assert.equal(existsSync(join(repo, ".mcp.json")), false);
+  assert.equal(existsSync(join(home, ".codex", "config.toml")), false);
+  assert.deepEqual(result.agents, []);
+  assert.deepEqual(result.files.sort(), [".env", ".gitignore"]);
+  assert.ok(ui.output.some((m) => /Then ask your agent/.test(m)));
+  assert.ok(!ui.output.some((m) => /No agent configured/.test(m)));
+});
+
+test("--env-only cannot be combined with --agent, --all or --print", () => {
+  for (const flag of [["--agent", "cursor"], ["--all"], ["--print"]]) {
+    let status = 0;
+    let stderr = "";
+    try {
+      execFileSync(
+        process.execPath,
+        [join(import.meta.dirname, "index.ts"), "--env-only", ...flag],
+        { cwd: repo, env: { ...process.env, CI: "true" }, stdio: "pipe" },
+      );
+    } catch (error) {
+      const e = error as { status: number; stderr: Buffer; stdout: Buffer };
+      status = e.status;
+      stderr = `${e.stderr}${e.stdout}`;
+    }
+    assert.equal(status, 2, flag.join(" "));
+    assert.match(
+      stderr,
+      new RegExp(`--env-only and ${flag[0]} cannot be used together`),
+    );
+  }
+});
+
 test("re-running with the same values changes nothing", async () => {
   await run(options(), fakeUi({ uuid: UUID }));
   const before = otherFiles().concat(read(join(repo, ".env")));
