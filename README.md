@@ -80,6 +80,12 @@ The waiting pairing is kept in `.git/wopee-init-pairing.json` (in the temp direc
 repository), readable only by you, and deleted as soon as the pairing is approved, denied or
 expires.
 
+## With the Wopee.io agent plugin
+
+The [Wopee.io plugin](https://github.com/Wopee-io/agent-plugins) for Claude Code and Codex already
+brings the `wopee` MCP server, so its setup skill runs `npx -y @wopee-io/init@latest --env-only`:
+it pairs as usual but writes only the git-ignored env file, and no second `wopee` server.
+
 ## In CI
 
 It never pairs in CI. Set `WOPEE_API_KEY` and `WOPEE_PROJECT_UUID` as secrets — generate a key on
@@ -99,6 +105,7 @@ with `missing_credentials`.
 | `--api-key <key>`  | Use this key instead of pairing. Prefer the `WOPEE_API_KEY` variable: a flag ends up in your shell history                                    |
 | `--agent <id>`     | `claude-code`, `cursor`, `vscode`, `opencode` or `codex`; repeat it for several. Skips the picker                                             |
 | `--all`            | Configure every supported agent                                                                                                               |
+| `--env-only`       | Write only the env file and its `.gitignore` entry, no MCP config: for the Wopee.io agent plugin, which brings the server                     |
 | `--print`          | Print the MCP snippets and the variable names instead of writing anything. Creates no key                                                     |
 | `--dry-run`        | Show what would change, without writing anything or creating a key                                                                            |
 | `--no-open`        | Print the link without opening a browser                                                                                                      |

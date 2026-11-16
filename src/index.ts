@@ -40,6 +40,8 @@ Options:
                        ends up in your shell history)
   --agent <id>         claude-code, cursor, vscode, opencode or codex; repeat for several
   --all                Configure every supported agent
+  --env-only           Write only the env file, no MCP config (the Wopee.io agent plugin brings
+                       the server)
   --print              Print the MCP snippets instead of writing anything
   --dry-run            Show what would change without writing anything or fetching a key
   --no-open            Print the link without opening a browser
@@ -231,6 +233,7 @@ async function main(): Promise<number> {
         "api-key": { type: "string" },
         agent: { type: "string", multiple: true },
         all: { type: "boolean", default: false },
+        "env-only": { type: "boolean", default: false },
         print: { type: "boolean", default: false },
         "dry-run": { type: "boolean", default: false },
         "no-open": { type: "boolean", default: false },
@@ -259,6 +262,11 @@ async function main(): Promise<number> {
     };
     if (args.manual && args.resume) clash("--manual", "--resume");
     if (args.manual && args["api-key"]) clash("--manual", "--api-key");
+    if (args["env-only"]) {
+      if (args.agent?.length) clash("--env-only", "--agent");
+      if (args.all) clash("--env-only", "--all");
+      if (args.print) clash("--env-only", "--print");
+    }
     if ((args.print || args["dry-run"]) && args.resume)
       clash(args.print ? "--print" : "--dry-run", "--resume");
 
@@ -292,6 +300,7 @@ async function main(): Promise<number> {
       dryRun: args["dry-run"],
       print: args.print,
       all: args.all,
+      envOnly: args["env-only"],
       callingAgent: callingAgentFromName(
         detected.isAgent ? detected.agent.name : undefined,
       ),
