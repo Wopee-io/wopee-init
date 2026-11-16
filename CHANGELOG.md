@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/Wopee-io/wopee-init/compare/v1.1.1...v1.2.0) (2026-11-16)
+
+
+### Features
+
+* --env-only writes only the env file, for the agent plugin ([5bc3322](https://github.com/Wopee-io/wopee-init/commit/5bc332246f4778feae1d0191e12d377e3aa72387))
+
 ## [1.1.1](https://github.com/Wopee-io/wopee-init/compare/v1.1.0...v1.1.1) (2026-11-16)
 
 
