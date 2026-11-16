@@ -134,14 +134,14 @@ test("gitignore append: separates from existing rules, keeps line endings", () =
   );
 });
 
-const ENTRY = { command: "npx", args: ["-y", "wopee-mcp"] };
+const ENTRY = { command: "npx", args: ["-y", "wopee-mcp@latest"] };
 
 test("claude code entry: npx, wrapped in cmd /c on native Windows", () => {
   assert.deepEqual(claudeCodeEntry("darwin"), ENTRY);
   assert.deepEqual(claudeCodeEntry("linux"), ENTRY);
   assert.deepEqual(claudeCodeEntry("win32"), {
     command: "cmd",
-    args: ["/c", "npx", "-y", "wopee-mcp"],
+    args: ["/c", "npx", "-y", "wopee-mcp@latest"],
   });
 });
 
@@ -177,7 +177,7 @@ test("json: adds the entry and keeps other servers, comments and indentation", (
 
 test("json: an equal entry with other key order is a no-op", () => {
   const text =
-    '{"mcpServers":{"wopee":{"args":["-y","wopee-mcp"],"command":"npx"}}}';
+    '{"mcpServers":{"wopee":{"args":["-y","wopee-mcp@latest"],"command":"npx"}}}';
   assert.equal(
     planJsonEntry("f", text, ["mcpServers", "wopee"], ENTRY).status,
     "same",
@@ -189,7 +189,7 @@ test("json: a different wopee entry is a conflict, shown with literal keys maske
     mcpServers: {
       wopee: {
         command: "npx",
-        args: ["-y", "wopee-mcp"],
+        args: ["-y", "wopee-mcp@latest"],
         env: {
           WOPEE_API_KEY: "literal-secret",
           WOPEE_PROJECT_UUID: "${WOPEE_PROJECT_UUID}",
@@ -202,6 +202,51 @@ test("json: a different wopee entry is a conflict, shown with literal keys maske
   assert.doesNotMatch(plan.existing ?? "", /literal-secret/);
   assert.match(plan.existing ?? "", /\$\{WOPEE_PROJECT_UUID\}/);
   assert.deepEqual(JSON.parse(plan.next).mcpServers.wopee, ENTRY);
+});
+
+const LEGACY_ENTRY = { command: "npx", args: ["-y", "wopee-mcp"] };
+
+test("json: the bare wopee-mcp entry an older init wrote is upgraded, not a conflict", () => {
+  const text = JSON.stringify({ mcpServers: { wopee: LEGACY_ENTRY } });
+  const plan = planJsonEntry(
+    "f",
+    text,
+    ["mcpServers", "wopee"],
+    ENTRY,
+    LEGACY_ENTRY,
+  );
+  assert.equal(plan.status, "update");
+  assert.deepEqual(JSON.parse(plan.next).mcpServers.wopee, ENTRY);
+});
+
+test("json: the legacy Claude Code entry on Windows (cmd /c) is upgraded too", () => {
+  const legacy = claudeCodeEntry("win32", ["-y", "wopee-mcp"]);
+  assert.deepEqual(legacy.args, ["/c", "npx", "-y", "wopee-mcp"]);
+  const text = JSON.stringify({ mcpServers: { wopee: legacy } });
+  const plan = planJsonEntry(
+    "f",
+    text,
+    ["mcpServers", "wopee"],
+    claudeCodeEntry("win32"),
+    legacy,
+  );
+  assert.equal(plan.status, "update");
+});
+
+test("json: a bare wopee-mcp entry with the user's own additions stays a conflict", () => {
+  const text = JSON.stringify({
+    mcpServers: {
+      wopee: { ...LEGACY_ENTRY, env: { WOPEE_API_URL: "https://x" } },
+    },
+  });
+  const plan = planJsonEntry(
+    "f",
+    text,
+    ["mcpServers", "wopee"],
+    ENTRY,
+    LEGACY_ENTRY,
+  );
+  assert.equal(plan.status, "conflict");
 });
 
 test("json: invalid files are refused, not overwritten", () => {
@@ -222,7 +267,7 @@ test("mask: literal keys in args are masked too", () => {
 });
 
 const CODEX_BLOCK =
-  '[mcp_servers.wopee]\ncommand = "npx"\nargs = ["-y", "wopee-mcp"]\n';
+  '[mcp_servers.wopee]\ncommand = "npx"\nargs = ["-y", "wopee-mcp@latest"]\n';
 
 test("toml: creates and appends the table, keeping the rest of the file", () => {
   assert.deepEqual(planCodexEntry("f", null), {
@@ -240,13 +285,13 @@ test("toml: creates and appends the table, keeping the rest of the file", () => 
 
 test("toml: the same table with other spacing and comments is a no-op", () => {
   const text =
-    '[mcp_servers."wopee"]  # wopee\ncommand="npx"\nargs = [ "-y", "wopee-mcp" ]\n\n[other]\nx = 1\n';
+    '[mcp_servers."wopee"]  # wopee\ncommand="npx"\nargs = [ "-y", "wopee-mcp@latest" ]\n\n[other]\nx = 1\n';
   assert.equal(planCodexEntry("f", text).status, "same");
 });
 
 test("toml: a different table (with sub-table) is replaced only on its own lines", () => {
   const text =
-    'a = 1\n\n[mcp_servers.wopee]\ncommand = "npx"\nargs = ["-y", "wopee-mcp"]\nenv_vars = ["WOPEE_API_KEY"]\n\n[mcp_servers.wopee.env]\nWOPEE_API_KEY = "literal-secret"\n\n# keep me\n[mcp_servers.github]\ncommand = "gh"\n';
+    'a = 1\n\n[mcp_servers.wopee]\ncommand = "npx"\nargs = ["-y", "wopee-mcp@latest"]\nenv_vars = ["WOPEE_API_KEY"]\n\n[mcp_servers.wopee.env]\nWOPEE_API_KEY = "literal-secret"\n\n# keep me\n[mcp_servers.github]\ncommand = "gh"\n';
   const plan = planCodexEntry("f", text);
   assert.equal(plan.status, "conflict");
   assert.doesNotMatch(plan.existing ?? "", /literal-secret/);
@@ -254,6 +299,17 @@ test("toml: a different table (with sub-table) is replaced only on its own lines
     plan.next,
     `a = 1\n\n${CODEX_BLOCK}\n# keep me\n[mcp_servers.github]\ncommand = "gh"\n`,
   );
+});
+
+test("toml: the bare wopee-mcp table an older init wrote is upgraded, not a conflict", () => {
+  const legacy =
+    '# mine\n[mcp_servers.wopee]\ncommand = "npx"\nargs = ["-y", "wopee-mcp"]\n';
+  const plan = planCodexEntry("f", legacy);
+  assert.equal(plan.status, "update");
+  assert.equal(plan.next, `# mine\n${CODEX_BLOCK}`);
+
+  const customised = `${legacy}env_vars = ["WOPEE_API_KEY"]\n`;
+  assert.equal(planCodexEntry("f", customised).status, "conflict");
 });
 
 test("toml: an inline wopee table is refused", () => {

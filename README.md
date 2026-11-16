@@ -3,7 +3,7 @@
 Connect a repository and its AI coding agents to [Wopee.io](https://wopee.io) in one command.
 
 ```sh
-npx -y @wopee-io/init
+npx -y @wopee-io/init@latest
 ```
 
 Run it from the repository you want to test — yourself, or by asking your coding agent: _"Set up
@@ -22,7 +22,7 @@ coding agent running the command never sees it.
    already has one. If `.gitignore` does not ignore that file yet, it adds it there. It refuses to
    write to an env file that git already tracks — and checks that before pairing, so no key is ever
    created that could not be stored.
-4. **Adds a key-free `wopee` MCP server** (`npx -y wopee-mcp`) for your coding agents:
+4. **Adds a key-free `wopee` MCP server** (`npx -y wopee-mcp@latest`) for your coding agents:
 
 | Agent             | File                                                                                     |
 | ----------------- | ---------------------------------------------------------------------------------------- |
@@ -32,11 +32,15 @@ coding agent running the command never sees it.
 | OpenCode          | `opencode.json`                                                                          |
 | Codex             | `~/.codex/config.toml` (user scope: Codex reads project config only in trusted projects) |
 
-On native Windows, the Claude Code entry runs `cmd /c npx -y wopee-mcp`, because Claude Code cannot
+On native Windows, the Claude Code entry runs `cmd /c npx -y wopee-mcp@latest`, because Claude Code cannot
 start `npx` directly there.
 
 `wopee-mcp` (1.35.0 or newer) reads the key from the repo's env file itself, so no MCP config holds
 a key and every config is safe to commit. Other servers and comments in these files are kept.
+
+`@latest` matters: a bare `npx -y wopee-mcp` keeps running whichever version npx cached first,
+which can predate 1.35.0. An entry an older version of this command wrote (`npx -y wopee-mcp`) is
+upgraded when you run it again; an entry you changed yourself is left alone.
 
 If the env file already holds a key that works for the project, it is kept and no new key is
 created. Running the command again changes nothing.
@@ -61,7 +65,7 @@ The agent should show you the link and the words. If you have not approved withi
   "verification_url": "…",
   "user_code": "brave-otter-42",
   "expires_in": 510,
-  "next": "npx -y @wopee-io/init --resume",
+  "next": "npx -y @wopee-io/init@latest --resume",
 }
 ```
 

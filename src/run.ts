@@ -1,7 +1,13 @@
 import { rmSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import { AGENTS, agentById } from "./agents/table.ts";
+import {
+  AGENTS,
+  LEGACY_MCP_ARGS,
+  MCP_ARGS,
+  MCP_COMMAND,
+  agentById,
+} from "./agents/table.ts";
 import type { AgentContext, AgentId, AgentTarget } from "./agents/table.ts";
 import type { ConfigPlan } from "./agents/plan.ts";
 import { planJsonEntry } from "./agents/writeJson.ts";
@@ -10,7 +16,7 @@ import { acquireCredentials } from "./credentials.ts";
 import type { CredentialSource, Credentials } from "./credentials.ts";
 import { chooseEnvFile, planEnvFile, readRepoEnv } from "./envFile.ts";
 import type { EnvKey } from "./envFile.ts";
-import { InitError } from "./errors.ts";
+import { INIT_COMMAND, InitError } from "./errors.ts";
 import { readTextIfExists, writeFileAtomic } from "./files.ts";
 import { appendIgnore, gitRoot, isIgnored, isTracked } from "./git.ts";
 import { isProjectUuid, validateProjectUuid } from "./input.ts";
@@ -130,7 +136,13 @@ function planAgent(agent: AgentTarget, ctx: AgentContext): ConfigPlan {
   const path = agent.file(ctx);
   const text = readTextIfExists(path);
   return agent.format === "json"
-    ? planJsonEntry(path, text, agent.jsonPath, agent.entry(ctx))
+    ? planJsonEntry(
+        path,
+        text,
+        agent.jsonPath,
+        agent.entry(ctx),
+        agent.entry(ctx, LEGACY_MCP_ARGS),
+      )
     : planCodexEntry(path, text);
 }
 
@@ -150,7 +162,7 @@ function agentSnippet(agent: AgentTarget, ctx: AgentContext): string {
  * so the resumed run targets the same instance and configures the same agents.
  */
 function resumeCommand(options: RunOptions, apiUrl: string): string {
-  const parts = ["npx -y @wopee-io/init"];
+  const parts = [INIT_COMMAND];
   if (apiUrl !== DEFAULT_API_URL) parts.push(`--api-url ${apiUrl}`);
   for (const agent of options.agents ?? []) parts.push(`--agent ${agent}`);
   if (options.all) parts.push("--all");
@@ -357,7 +369,7 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
         `${show(plan.path)} already has a different \`wopee\` server:\n${plan.existing}`,
       );
       const replace = await ui.confirm(
-        `Replace it with the key-free \`npx -y wopee-mcp\` entry?`,
+        `Replace it with the key-free \`${[MCP_COMMAND, ...MCP_ARGS].join(" ")}\` entry?`,
         false,
       );
       if (!replace) {

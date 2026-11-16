@@ -1,4 +1,4 @@
-import { InitError } from "./errors.ts";
+import { INIT_COMMAND, InitError } from "./errors.ts";
 import { requestJson } from "./http.ts";
 
 /**
@@ -101,7 +101,7 @@ export async function startSession(
     throw new InitError(
       "pairing_unavailable",
       `${apiUrl} has browser pairing turned off.`,
-      "npx -y @wopee-io/init --manual",
+      `${INIT_COMMAND} --manual`,
     );
   }
   throw new InitError(

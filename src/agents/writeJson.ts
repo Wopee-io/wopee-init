@@ -36,13 +36,15 @@ function detectIndent(text: string): {
 
 /**
  * Plans setting one server entry in a JSON or JSONC config. Only that entry changes: other
- * servers, keys, comments and formatting stay as they are.
+ * servers, keys, comments and formatting stay as they are. An existing entry equal to `legacy`
+ * (what an older init wrote) is upgraded like a missing one; any other different entry conflicts.
  */
 export function planJsonEntry(
   path: string,
   text: string | null,
   jsonPath: string[],
   entry: Record<string, unknown>,
+  legacy?: Record<string, unknown>,
 ): ConfigPlan {
   if (text === null || text.trim() === "") {
     const [root, ...rest] = jsonPath;
@@ -75,7 +77,11 @@ export function planJsonEntry(
     formattingOptions: { ...detectIndent(text), eol },
   });
   const next = applyEdits(text, edits);
-  if (current === undefined) return { path, status: "update", next };
+  if (
+    current === undefined ||
+    (legacy !== undefined && canonical(current) === canonical(legacy))
+  )
+    return { path, status: "update", next };
   return {
     path,
     status: "conflict",

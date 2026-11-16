@@ -149,7 +149,7 @@ test("fresh repo: opens the start page, writes a git-ignored .env and key-free M
     {
       type: "stdio",
       command: "npx",
-      args: ["-y", "wopee-mcp"],
+      args: ["-y", "wopee-mcp@latest"],
       envFile: "${workspaceFolder}/.env",
     },
   );
@@ -294,7 +294,7 @@ test("dev instance: deep link on cmd.dev and WOPEE_API_URL in .env; .env.local p
 test("an existing wopee entry with env references is kept unless the user says yes", async () => {
   const old = {
     command: "npx",
-    args: ["-y", "wopee-mcp"],
+    args: ["-y", "wopee-mcp@latest"],
     env: { WOPEE_API_KEY: "${WOPEE_API_KEY}" },
   };
   writeFileSync(
@@ -310,6 +310,56 @@ test("an existing wopee entry with env references is kept unless the user says y
   assert.deepEqual(
     JSON.parse(read(join(repo, ".mcp.json"))).mcpServers.wopee,
     old,
+  );
+});
+
+test("the bare wopee-mcp entry an older init wrote is upgraded without asking", async () => {
+  writeFileSync(
+    join(repo, ".mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        wopee: claudeCodeEntry(process.platform, ["-y", "wopee-mcp"]),
+      },
+    }),
+  );
+  const asked: string[] = [];
+  const ui = fakeUi({
+    uuid: UUID,
+    agents: ["claude-code"],
+    confirm: (m) => {
+      asked.push(m);
+      return true;
+    },
+  });
+  await run(options(), ui);
+  assert.deepEqual(
+    JSON.parse(read(join(repo, ".mcp.json"))).mcpServers.wopee,
+    claudeCodeEntry(),
+  );
+  assert.ok(!asked.some((m) => /Replace it with/.test(m)));
+});
+
+test("agent mode upgrades the bare wopee-mcp entry instead of skipping it", async () => {
+  writeFileSync(
+    join(repo, ".env"),
+    `WOPEE_API_KEY=${GOOD_KEY}\nWOPEE_PROJECT_UUID=${UUID}\n`,
+  );
+  writeFileSync(
+    join(repo, ".mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        wopee: claudeCodeEntry(process.platform, ["-y", "wopee-mcp"]),
+      },
+    }),
+  );
+  const result = await run(
+    options({ interaction: "agent", agents: ["claude-code"] }),
+    fakeUi({}),
+  );
+  assert.deepEqual(result.skipped, []);
+  assert.deepEqual(
+    JSON.parse(read(join(repo, ".mcp.json"))).mcpServers.wopee,
+    claudeCodeEntry(),
   );
 });
 

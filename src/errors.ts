@@ -1,3 +1,9 @@
+/**
+ * How the `next` commands start. `@latest`, so npx does not rerun an older init it cached under
+ * the bare name.
+ */
+export const INIT_COMMAND = "npx -y @wopee-io/init@latest";
+
 export type InitErrorCode =
   | "usage"
   | "no_tty"
