@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/Wopee-io/wopee-init/compare/v1.2.0...v1.3.0) (2026-11-18)
+
+
+### Features
+
+* return the pairing link at once when an agent runs init ([418e624](https://github.com/Wopee-io/wopee-init/commit/418e624c350239ba6968c3f381a17dc1b4ef6a23))
+
 # [1.2.0](https://github.com/Wopee-io/wopee-init/compare/v1.1.1...v1.2.0) (2026-11-16)
 
 
