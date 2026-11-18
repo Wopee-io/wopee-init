@@ -70,7 +70,11 @@ export interface RunOptions {
   apiKey?: string;
   /** Pick up a pairing a previous run handed back. */
   resume?: boolean;
-  /** Agent mode: false hands back as soon as the link is shown (`--no-wait`). */
+  /**
+   * Agent mode: whether to wait for the approval once the link is shown. By default only `--resume`
+   * waits: an agent's shell tool may hide the output until the call returns, so the first run
+   * returns at once and the agent can show the link. `--no-wait` passes false.
+   */
   wait?: boolean;
   /** Agent mode: how long to wait for the approval before handing back. */
   waitSeconds?: number;
@@ -274,7 +278,7 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
       cmdUrl: options.cmdUrl,
       apiKey: options.apiKey,
       resume: !!options.resume,
-      wait: options.wait !== false,
+      wait: options.wait ?? !!options.resume,
       waitSeconds: options.waitSeconds ?? AGENT_WAIT_SECONDS,
       open: options.open,
       agentSlug: options.callingAgent?.slug ?? "terminal",

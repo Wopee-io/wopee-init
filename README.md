@@ -6,11 +6,13 @@ Connect a repository and its AI coding agents to [Wopee.io](https://wopee.io) in
 npx -y @wopee-io/init@latest
 ```
 
-Run it from the repository you want to test — yourself, or by asking your coding agent: _"Set up
-Wopee.io testing for this repo."_ It prints a link and three pairing words. You open the link,
-check that Wopee.io Commander shows the same words, pick a project and approve. A new, named
-project API key then comes back **encrypted to the waiting command**: nobody copies it, and a
-coding agent running the command never sees it.
+This is the setup command for a request like _"Set up Wopee.io testing for this repo."_ A coding
+agent can run it itself from the repository root: it asks no questions and needs no key. You can
+also run it in your own terminal.
+
+It prints a link and three pairing words. You open the link, check that Wopee.io Commander shows
+the same words, pick a project and approve. A new, named project API key then comes back
+**encrypted to the command**: nobody copies it, and it never passes through the agent's chat.
 
 ## What it does
 
@@ -48,28 +50,27 @@ created. Running the command again changes nothing.
 ## From a coding agent
 
 When a coding agent runs it (or there is no terminal), it never prompts. It prints **one JSON
-object per line on stdout** and its human-readable text on stderr:
+object per line on stdout** and its human-readable text on stderr.
+
+The first run returns within seconds and exits with code 75, which is not a failure. Some agents
+hide a command's output until it ends, so this is what puts the link on your screen:
 
 ```jsonc
 {"status":"pairing","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600}
+{"status":"action_required","message":"Show the user the link and brave-otter-42, …","reason":"approve_in_commander","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600,"next":"npx -y @wopee-io/init@latest --resume"}
+```
+
+The agent shows you the link and the words, then runs the `next` command. That command waits for
+your approval and finishes the setup:
+
+```jsonc
+{"status":"pairing","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":590}
 {"status":"success","project_uuid":"…","api_url":"https://api.wopee.io","analyses":3,"files":[".gitignore",".env",".mcp.json"],"skipped":[],"agents":[{"id":"claude-code","restart":"…"}],"first_prompt":"Run a Wopee analysis of <your app URL>"}
 ```
 
-The agent should show you the link and the words. If you have not approved within about 90 seconds
-(inside the default time limit of an agent's shell tool), it hands back and exits with code 75:
-
-```jsonc
-{
-  "status": "action_required",
-  "reason": "approve_in_commander",
-  "verification_url": "…",
-  "user_code": "brave-otter-42",
-  "expires_in": 510,
-  "next": "npx -y @wopee-io/init@latest --resume",
-}
-```
-
-Approve, then run the `next` command; it carries on with the same pairing. Errors look like
+If you have not approved within about 90 seconds (inside the default time limit of an agent's shell
+tool), `--resume` exits with code 75 again. Once you say you approved, the agent runs `next` once
+more; the link stays valid for 10 minutes. Errors look like
 `{"status":"error","code":"pairing_denied","message":"…","next":"…"}`. No line ever contains the
 key.
 
@@ -96,8 +97,8 @@ with `missing_credentials`.
 
 | Option             |                                                                                                                                               |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--resume`         | Continue a pairing an earlier run handed back                                                                                                 |
-| `--no-wait`        | Hand back right after printing the link (agents)                                                                                              |
+| `--resume`         | Continue a pairing an earlier run handed back, waiting about 90 seconds for the approval                                                      |
+| `--no-wait`        | With `--resume`: hand back right after printing the link, without waiting                                                                     |
 | `--manual`         | Paste the project UUID and a key from the API Keys page instead of pairing. Needs a terminal: the key goes into a masked prompt               |
 | `--api-url <url>`  | A dedicated or dev instance, e.g. `https://api.dev.wopee.io`. Default: `WOPEE_API_URL`, then the repo's env file, then `https://api.wopee.io` |
 | `--cmd-url <url>`  | The Commander URL for `--manual`, when it is not the api host with `api.` replaced by `cmd.`                                                  |

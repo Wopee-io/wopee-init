@@ -301,7 +301,9 @@ async function paired(ctx: CredentialContext): Promise<Credentials> {
   const handBack = () =>
     new InitError(
       "action_required",
-      `Waiting for approval in Wopee.io Commander. Open the link, check that it shows ${state.userCode}, approve, then run the next command.`,
+      ctx.resume
+        ? `Still waiting for approval in Wopee.io Commander. Ask the user to open the link, check that it shows ${state.userCode} and approve, then run the next command once they say they have approved.`
+        : `Show the user the link and ${state.userCode}, and ask them to approve in Wopee.io Commander. Then run the next command: it waits about ${ctx.waitSeconds} seconds for the approval.`,
       ctx.resumeCommand,
       {
         reason: "approve_in_commander",
