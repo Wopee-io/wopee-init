@@ -1,7 +1,7 @@
 {
   "name": "@wopee-io/init",
   "version": "1.2.0",
-  "description": "Connect a repository and its AI coding agents to Wopee.io: writes a git-ignored .env and a key-free wopee-mcp entry for each agent.",
+  "description": "Wopee.io setup made for coding agents to run themselves: npx -y @wopee-io/init@latest prints a link for the user to approve, and the API key never enters the chat.",
   "type": "module",
   "bin": {
     "wopee-init": "build/index.js"

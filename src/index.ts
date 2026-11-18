@@ -22,16 +22,17 @@ const HELP = `Connect this repository and its AI coding agents to Wopee.io.
 Usage: npx -y @wopee-io/init [options]
 
 Prints a link and pairing words. You approve in Wopee.io Commander, and a new, named project API
-key comes back encrypted to this process: nobody copies it, and a coding agent running this never
-sees it. Then it writes a git-ignored .env and a key-free \`wopee\` MCP server for your agents.
+key comes back encrypted to this process: nobody copies it, and it never passes through a coding
+agent's chat. Then it writes a git-ignored .env and a key-free \`wopee\` MCP server for your agents.
 
-Run from a coding agent, it prints one JSON line per step on stdout (text goes to stderr). If the
-approval takes longer than ~90 s it prints {"status":"action_required",…} and exits 75; run the
-"next" command it gives (with --resume) once you have approved.
+A coding agent can run this itself: it never prompts and prints one JSON line per step on stdout
+(text goes to stderr). The first run prints the link and {"status":"action_required",…}, then exits
+75 so the agent can show the link. The "next" command it gives (with --resume) waits ~90 s for the
+approval and finishes the setup.
 
 Options:
-  --resume             Continue a pairing an earlier run handed back
-  --no-wait            Hand back right after printing the link (agents)
+  --resume             Continue a pairing an earlier run handed back, waiting for the approval
+  --no-wait            With --resume: hand back right after printing the link, without waiting
   --manual             Paste the project UUID and a key from the API Keys page instead of pairing
   --api-url <url>      Wopee.io api (default: WOPEE_API_URL, the repo's .env, https://api.wopee.io)
   --cmd-url <url>      Commander URL for --manual, when it is not the api host with api. -> cmd.
@@ -174,7 +175,12 @@ function report(error: unknown, interaction: Interaction): number {
     if (machine) {
       if (error.code === "action_required") {
         say(error.message);
-        emit({ status: "action_required", ...error.details, next: error.next });
+        emit({
+          status: "action_required",
+          message: error.message,
+          ...error.details,
+          next: error.next,
+        });
       } else {
         say(error.message);
         emit({
@@ -296,7 +302,7 @@ async function main(): Promise<number> {
       interaction,
       apiKey: args["api-key"],
       resume: args.resume,
-      wait: !args["no-wait"],
+      wait: args["no-wait"] ? false : undefined,
       dryRun: args["dry-run"],
       print: args.print,
       all: args.all,

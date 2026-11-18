@@ -2,7 +2,10 @@
 // Whole runs in pairing mode against a fake api that seals a real key, as the api does.
 import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   chmodSync,
   existsSync,
@@ -15,6 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import sodium from "libsodium-wrappers";
 
 import { InitError } from "./errors.ts";
@@ -200,11 +204,15 @@ const options = (
   fetchImpl: api.fetch,
   mode: "pair",
   interaction: "agent",
+  wait: true,
   callingAgent: { slug: "claude-code", id: "claude-code" },
   host: "laptop",
   clock: fakeClock(),
   ...extra,
 });
+
+/** What the command line passes when `--no-wait` is not given. */
+const DEFAULT_WAIT = { wait: undefined };
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -343,6 +351,145 @@ test("--no-wait hands back right after the link, without polling", async () => {
     "action_required",
   );
   assert.equal(api.polls, 0);
+});
+
+test("an agent's first run hands back with the link at once and writes nothing", async () => {
+  const api = fakeApi();
+  const ui = machineUi();
+  const error = await rejectsWith(
+    run(options(api, DEFAULT_WAIT), ui),
+    "action_required",
+  );
+
+  assert.equal(api.polls, 0);
+  assert.equal(error.exitCode, 75);
+  assert.match(error.message, /^Show the user the link and brave-otter-42/);
+  assert.equal(error.next, "npx -y @wopee-io/init@latest --resume");
+  assert.equal(
+    error.details?.verification_url,
+    "https://cmd.wopee.io/cli/authorize?session=s-1",
+  );
+  assert.equal(error.details?.user_code, "brave-otter-42");
+  assert.equal(error.details?.expires_in, 600);
+  assert.deepEqual(
+    ui.events.map((e) => e.status),
+    ["pairing"],
+  );
+  assert.ok(existsSync(pairingStatePath(repo)));
+  assert.equal(existsSync(join(repo, ".env")), false);
+  assert.equal(existsSync(join(repo, ".mcp.json")), false);
+});
+
+test("--resume waits for the approval and finishes the first run's pairing", async () => {
+  const api = fakeApi({ statuses: ["pending", "approved"] });
+  const first = machineUi();
+  await rejectsWith(run(options(api, DEFAULT_WAIT), first), "action_required");
+
+  const second = machineUi();
+  const result = await run(
+    options(api, { ...DEFAULT_WAIT, resume: true }),
+    second,
+  );
+
+  assert.equal(result.credentials, "paired");
+  assert.equal(api.polls, 2);
+  assert.equal(api.sessions.length, 1);
+  assert.match(
+    read(join(repo, ".env")),
+    new RegExp(`WOPEE_API_KEY=${PAIRED_KEY}`),
+  );
+  assert.ok(
+    !everything(first).includes(PAIRED_KEY) &&
+      !everything(second).includes(PAIRED_KEY),
+  );
+});
+
+test("a --resume that runs out of time says to wait for the user", async () => {
+  const api = fakeApi({ statuses: ["pending"] });
+  await rejectsWith(
+    run(options(api, DEFAULT_WAIT), machineUi()),
+    "action_required",
+  );
+
+  const error = await rejectsWith(
+    run(options(api, { ...DEFAULT_WAIT, resume: true }), machineUi()),
+    "action_required",
+  );
+
+  assert.ok(api.polls > 0);
+  assert.match(error.message, /^Still waiting for approval/);
+  assert.match(error.message, /once they say they have approved/);
+  assert.equal(error.next, "npx -y @wopee-io/init@latest --resume");
+  assert.equal(error.details?.expires_in, 510);
+});
+
+test("--no-wait also makes --resume hand back without polling", async () => {
+  const api = fakeApi();
+  await rejectsWith(
+    run(options(api, DEFAULT_WAIT), machineUi()),
+    "action_required",
+  );
+  await rejectsWith(
+    run(options(api, { wait: false, resume: true }), machineUi()),
+    "action_required",
+  );
+  assert.equal(api.polls, 0);
+});
+
+test("the command prints the hand-back, with what to do, as JSON on stdout", async () => {
+  const api = fakeApi();
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    const answer = await api.fetch(`${API}${request.url}`, {
+      method: request.method,
+      body: chunks.length ? Buffer.concat(chunks).toString() : undefined,
+    });
+    response.writeHead(answer.status).end(await answer.text());
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const apiUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const failure = await promisify(execFile)(
+      process.execPath,
+      [join(import.meta.dirname, "index.ts"), "--api-url", apiUrl],
+      {
+        cwd: repo,
+        // Nothing inherited: no CI flag, proxy or key from the machine running the tests.
+        env: {
+          PATH: process.env.PATH,
+          SystemRoot: process.env.SystemRoot,
+          HOME: home,
+          USERPROFILE: home,
+        },
+      },
+    ).then(
+      () => assert.fail("the command should hand back"),
+      (error: { code: number; stdout: string }) => error,
+    );
+
+    assert.equal(failure.code, 75);
+    assert.equal(api.polls, 0);
+    const lines = failure.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      lines.map((line) => line.status),
+      ["pairing", "action_required"],
+    );
+    assert.match(lines[1].message, /^Show the user the link/);
+    assert.equal(lines[1].user_code, "brave-otter-42");
+    assert.equal(
+      lines[1].next,
+      `npx -y @wopee-io/init@latest --api-url ${apiUrl} --resume`,
+    );
+  } finally {
+    server.close();
+  }
 });
 
 test("the resume command repeats a non-default api and the chosen agents", async () => {
