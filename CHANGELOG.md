@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/Wopee-io/wopee-init/compare/v1.3.0...v1.3.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* ask agents to write the pairing link before running --resume ([818eeae](https://github.com/Wopee-io/wopee-init/commit/818eeaed53f67b52f934faabddb0893d9d394866))
+
 # [1.3.0](https://github.com/Wopee-io/wopee-init/compare/v1.2.0...v1.3.0) (2026-11-18)
 
 
