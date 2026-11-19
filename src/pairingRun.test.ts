@@ -365,7 +365,11 @@ test("an agent's first run hands back with the link at once and writes nothing",
   assert.equal(error.exitCode, 75);
   assert.match(
     error.message,
-    /^Before you run the next command, write the link and brave-otter-42 in your reply to the user/,
+    /^Give the user the link and brave-otter-42 now, and end your turn/,
+  );
+  assert.match(
+    error.message,
+    /Once they say they have approved, run the next command/,
   );
   assert.equal(error.next, "npx -y @wopee-io/init@latest --resume");
   assert.equal(
@@ -421,6 +425,7 @@ test("a --resume that runs out of time says to wait for the user", async () => {
 
   assert.ok(api.polls > 0);
   assert.match(error.message, /^Still waiting for approval/);
+  assert.match(error.message, /again, and end your turn/);
   assert.match(error.message, /once they say they have approved/);
   assert.equal(error.next, "npx -y @wopee-io/init@latest --resume");
   assert.equal(error.details?.expires_in, 510);
@@ -486,7 +491,7 @@ test("the command prints the hand-back, with what to do, as JSON on stdout", asy
     );
     assert.match(
       lines[1].message,
-      /^Before you run the next command, write the link/,
+      /^Give the user the link and brave-otter-42 now, and end your turn/,
     );
     assert.equal(lines[1].user_code, "brave-otter-42");
     assert.equal(

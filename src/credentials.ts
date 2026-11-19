@@ -302,8 +302,9 @@ async function paired(ctx: CredentialContext): Promise<Credentials> {
     new InitError(
       "action_required",
       ctx.resume
-        ? `Still waiting for approval in Wopee.io Commander. Ask the user to open the link, check that it shows ${state.userCode} and approve, then run the next command once they say they have approved.`
-        : `Before you run the next command, write the link and ${state.userCode} in your reply to the user, and ask them to approve in Wopee.io Commander. They need both, and the next command waits up to ${ctx.waitSeconds} seconds for the approval, which can hide its output until it ends.`,
+        ? `Still waiting for approval in Wopee.io Commander. Give the user the link and ${state.userCode} again, and end your turn; run the next command once they say they have approved.`
+        : // The user cannot approve without the link, so the agent ends its turn to show it.
+          `Give the user the link and ${state.userCode} now, and end your turn: they open the link, check that it shows the same words and approve in Wopee.io Commander. Once they say they have approved, run the next command; it finishes the setup.`,
       ctx.resumeCommand,
       {
         reason: "approve_in_commander",
