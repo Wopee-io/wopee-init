@@ -1,6 +1,6 @@
 {
   "name": "@wopee-io/init",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Wopee.io setup made for coding agents to run themselves: npx -y @wopee-io/init@latest prints a link for the user to approve, and the API key never enters the chat.",
   "type": "module",
   "bin": {

@@ -1,3 +1,10 @@
+## [1.3.2](https://github.com/Wopee-io/wopee-init/compare/v1.3.1...v1.3.2) (2026-11-19)
+
+
+### Bug Fixes
+
+* have agents show the pairing link and end their turn ([319edb1](https://github.com/Wopee-io/wopee-init/commit/319edb101f3e701cdfc5ed3acbe35a0cc32c84f4))
+
 ## [1.3.1](https://github.com/Wopee-io/wopee-init/compare/v1.3.0...v1.3.1) (2026-11-19)
 
 
