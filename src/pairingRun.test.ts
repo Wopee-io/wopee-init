@@ -363,7 +363,10 @@ test("an agent's first run hands back with the link at once and writes nothing",
 
   assert.equal(api.polls, 0);
   assert.equal(error.exitCode, 75);
-  assert.match(error.message, /^Show the user the link and brave-otter-42/);
+  assert.match(
+    error.message,
+    /^Before you run the next command, write the link and brave-otter-42 in your reply to the user/,
+  );
   assert.equal(error.next, "npx -y @wopee-io/init@latest --resume");
   assert.equal(
     error.details?.verification_url,
@@ -481,7 +484,10 @@ test("the command prints the hand-back, with what to do, as JSON on stdout", asy
       lines.map((line) => line.status),
       ["pairing", "action_required"],
     );
-    assert.match(lines[1].message, /^Show the user the link/);
+    assert.match(
+      lines[1].message,
+      /^Before you run the next command, write the link/,
+    );
     assert.equal(lines[1].user_code, "brave-otter-42");
     assert.equal(
       lines[1].next,
