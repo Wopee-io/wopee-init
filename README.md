@@ -57,10 +57,10 @@ hide a command's output until it ends, so this is what puts the link on your scr
 
 ```jsonc
 {"status":"pairing","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600}
-{"status":"action_required","message":"Show the user the link and brave-otter-42, …","reason":"approve_in_commander","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600,"next":"npx -y @wopee-io/init@latest --resume"}
+{"status":"action_required","message":"Before you run the next command, write the link and brave-otter-42 in your reply to the user, …","reason":"approve_in_commander","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600,"next":"npx -y @wopee-io/init@latest --resume"}
 ```
 
-The agent shows you the link and the words, then runs the `next` command. That command waits for
+The agent writes the link and the words in its reply, then runs the `next` command. That command waits for
 your approval and finishes the setup:
 
 ```jsonc
