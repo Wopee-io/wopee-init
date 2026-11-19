@@ -27,8 +27,8 @@ agent's chat. Then it writes a git-ignored .env and a key-free \`wopee\` MCP ser
 
 A coding agent can run this itself: it never prompts and prints one JSON line per step on stdout
 (text goes to stderr). The first run prints the link and {"status":"action_required",…}, then exits
-75 so the agent can show the link. The "next" command it gives (with --resume) waits ~90 s for the
-approval and finishes the setup.
+75 so the agent can show you the link. Once you have approved, the agent runs the "next" command it
+gives (with --resume), which finishes the setup.
 
 Options:
   --resume             Continue a pairing an earlier run handed back, waiting for the approval

@@ -57,20 +57,20 @@ hide a command's output until it ends, so this is what puts the link on your scr
 
 ```jsonc
 {"status":"pairing","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600}
-{"status":"action_required","message":"Before you run the next command, write the link and brave-otter-42 in your reply to the user, …","reason":"approve_in_commander","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600,"next":"npx -y @wopee-io/init@latest --resume"}
+{"status":"action_required","message":"Give the user the link and brave-otter-42 now, and end your turn: …","reason":"approve_in_commander","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":600,"next":"npx -y @wopee-io/init@latest --resume"}
 ```
 
-The agent writes the link and the words in its reply, then runs the `next` command. That command waits for
-your approval and finishes the setup:
+The agent gives you the link and the words and waits for you. Once you say you approved, it runs the
+`next` command, which finishes the setup:
 
 ```jsonc
 {"status":"pairing","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":590}
 {"status":"success","project_uuid":"…","api_url":"https://api.wopee.io","analyses":3,"files":[".gitignore",".env",".mcp.json"],"skipped":[],"agents":[{"id":"claude-code","restart":"…"}],"first_prompt":"Run a Wopee analysis of <your app URL>"}
 ```
 
-If you have not approved within about 90 seconds (inside the default time limit of an agent's shell
-tool), `--resume` exits with code 75 again. Once you say you approved, the agent runs `next` once
-more; the link stays valid for 10 minutes. Errors look like
+If the approval has not arrived yet, `--resume` waits up to about 90 seconds (inside the default time
+limit of an agent's shell tool), then exits with code 75 again and the agent asks you once more; the
+link stays valid for 10 minutes. Errors look like
 `{"status":"error","code":"pairing_denied","message":"…","next":"…"}`. No line ever contains the
 key.
 
