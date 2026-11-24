@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/Wopee-io/wopee-init/compare/v1.3.2...v1.4.0) (2026-11-24)
+
+
+### Features
+
+* give Claude Code the remote MCP server where the instance runs one ([fc6948b](https://github.com/Wopee-io/wopee-init/commit/fc6948b0c10b665adf022f3cad115e0600ebee32))
+
 ## [1.3.2](https://github.com/Wopee-io/wopee-init/compare/v1.3.1...v1.3.2) (2026-11-19)
 
 
