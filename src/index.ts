@@ -43,6 +43,8 @@ Options:
   --all                Configure every supported agent
   --env-only           Write only the env file, no MCP config (the Wopee.io agent plugin brings
                        the server)
+  --stdio              Give Claude Code the local server (npx wopee-mcp) even where the instance
+                       runs the remote one, which needs no key in the MCP config
   --print              Print the MCP snippets instead of writing anything
   --dry-run            Show what would change without writing anything or fetching a key
   --no-open            Print the link without opening a browser
@@ -240,6 +242,7 @@ async function main(): Promise<number> {
         agent: { type: "string", multiple: true },
         all: { type: "boolean", default: false },
         "env-only": { type: "boolean", default: false },
+        stdio: { type: "boolean", default: false },
         print: { type: "boolean", default: false },
         "dry-run": { type: "boolean", default: false },
         "no-open": { type: "boolean", default: false },
@@ -272,6 +275,7 @@ async function main(): Promise<number> {
       if (args.agent?.length) clash("--env-only", "--agent");
       if (args.all) clash("--env-only", "--all");
       if (args.print) clash("--env-only", "--print");
+      if (args.stdio) clash("--env-only", "--stdio");
     }
     if ((args.print || args["dry-run"]) && args.resume)
       clash(args.print ? "--print" : "--dry-run", "--resume");
@@ -307,6 +311,7 @@ async function main(): Promise<number> {
       print: args.print,
       all: args.all,
       envOnly: args["env-only"],
+      stdio: args.stdio,
       callingAgent: callingAgentFromName(
         detected.isAgent ? detected.agent.name : undefined,
       ),

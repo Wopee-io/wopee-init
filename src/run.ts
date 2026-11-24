@@ -21,6 +21,7 @@ import { readTextIfExists, writeFileAtomic } from "./files.ts";
 import { appendIgnore, gitRoot, isIgnored, isTracked } from "./git.ts";
 import { isProjectUuid, validateProjectUuid } from "./input.ts";
 import { DEFAULT_API_URL, resolveApiUrl } from "./instance.ts";
+import { discoverRemoteMcp } from "./pairing.ts";
 import type { Clock } from "./pairing.ts";
 
 export interface Ui {
@@ -80,6 +81,8 @@ export interface RunOptions {
   waitSeconds?: number;
   dryRun?: boolean;
   print?: boolean;
+  /** Write the local (stdio) server even where the instance runs a remote one. */
+  stdio?: boolean;
   /** Configure every supported agent. */
   all?: boolean;
   /** Write only the env file: an agent plugin already brings the MCP server. */
@@ -100,7 +103,7 @@ export interface RunResult {
   /** The same, relative to the repository (or `~/` for files in the home directory). */
   files: string[];
   skipped: { file: string; reason: string }[];
-  agents: { id: AgentId; restart: string }[];
+  agents: { id: AgentId; restart: string; mcp: McpKind }[];
   credentials: CredentialSource | null;
 }
 
@@ -138,30 +141,72 @@ function selectedAgents(ids: string[]): AgentTarget[] {
   });
 }
 
-function planAgent(agent: AgentTarget, ctx: AgentContext): ConfigPlan {
+/** Which server an agent's entry starts: the local package, or the instance's remote server. */
+export type McpKind = "stdio" | "remote";
+
+/** The instance's remote MCP server, and whether this run writes it. */
+interface Remote {
+  url: string | null;
+  use: boolean;
+}
+
+const NO_REMOTE: Remote = { url: null, use: false };
+
+const mcpKind = (agent: AgentTarget, remote: Remote): McpKind =>
+  remote.use && agent.format === "json" && agent.remoteEntry
+    ? "remote"
+    : "stdio";
+
+/** The entry this run writes for a JSON agent. */
+function desiredEntry(
+  agent: AgentTarget & { format: "json" },
+  ctx: AgentContext,
+  remote: Remote,
+): Record<string, unknown> {
+  return mcpKind(agent, remote) === "remote"
+    ? agent.remoteEntry!(remote.url!)
+    : agent.entry(ctx);
+}
+
+function planAgent(
+  agent: AgentTarget,
+  ctx: AgentContext,
+  remote: Remote,
+): ConfigPlan {
   const path = agent.file(ctx);
   const text = readTextIfExists(path);
-  return agent.format === "json"
-    ? planJsonEntry(
-        path,
-        text,
-        agent.jsonPath,
-        agent.entry(ctx),
-        agent.entry(ctx, LEGACY_MCP_ARGS),
-      )
-    : planCodexEntry(path, text);
+  if (agent.format !== "json") return planCodexEntry(path, text);
+  // Every entry an init writes is ours, so switching between them is an update.
+  const ours = [agent.entry(ctx), agent.entry(ctx, LEGACY_MCP_ARGS)];
+  if (agent.remoteEntry && remote.url) ours.push(agent.remoteEntry(remote.url));
+  return planJsonEntry(
+    path,
+    text,
+    agent.jsonPath,
+    desiredEntry(agent, ctx, remote),
+    ours,
+  );
 }
 
 /** The key-free MCP snippet for one agent, as it would sit in the agent's config file. */
-function agentSnippet(agent: AgentTarget, ctx: AgentContext): string {
+function agentSnippet(
+  agent: AgentTarget,
+  ctx: AgentContext,
+  remote: Remote,
+): string {
   if (agent.format === "toml")
     return planCodexEntry(agent.file(ctx), null).next;
   const nested = agent.jsonPath.reduceRight<unknown>(
     (inner, key) => ({ [key]: inner }),
-    agent.entry(ctx),
+    desiredEntry(agent, ctx, remote),
   );
   return `${JSON.stringify(nested, null, 2)}\n`;
 }
+
+const restartHint = (agent: AgentTarget, remote: Remote) =>
+  mcpKind(agent, remote) === "remote" && agent.format === "json"
+    ? (agent.remoteRestartHint ?? agent.restartHint)
+    : agent.restartHint;
 
 /**
  * The command a handed-back pairing continues with. It repeats this run's api and agent choices,
@@ -173,6 +218,7 @@ function resumeCommand(options: RunOptions, apiUrl: string): string {
   for (const agent of options.agents ?? []) parts.push(`--agent ${agent}`);
   if (options.all) parts.push("--all");
   if (options.envOnly) parts.push("--env-only");
+  if (options.stdio) parts.push("--stdio");
   parts.push("--resume");
   return parts.join(" ");
 }
@@ -233,15 +279,32 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
     );
   };
 
+  /**
+   * Asked only when an agent can use the remote server and a person will be there to sign in:
+   * never in CI. Without an answer the run writes the local server, as before.
+   */
+  const resolveRemote = async (agents: AgentTarget[]): Promise<Remote> => {
+    const wanted = agents.some((a) => a.format === "json" && a.remoteEntry);
+    if (!wanted || interaction === "ci") return NO_REMOTE;
+    const url = await discoverRemoteMcp(
+      apiUrl,
+      `wopee-init/${options.version}`,
+      options.fetchImpl,
+    );
+    return { url, use: url !== null && !options.stdio };
+  };
+
   // --print: the snippets to paste by hand. No key is fetched, so none can be lost or shown.
   if (options.print) {
     const agents = await chooseAgents();
+    const remote = await resolveRemote(agents);
     const names: EnvKey[] = ["WOPEE_API_KEY", "WOPEE_PROJECT_UUID"];
     if (apiUrl !== DEFAULT_API_URL) names.push("WOPEE_API_URL");
     const snippets = agents.map((a) => ({
       agent: a.id,
       file: show(a.file(ctx)),
-      snippet: agentSnippet(a, ctx),
+      snippet: agentSnippet(a, ctx, remote),
+      mcp: mcpKind(a, remote),
     }));
     ui.info(
       `Put ${names.join(", ")} in a git-ignored ${envFile}: the project UUID and a key from your project's API Keys page in Wopee.io Commander.`,
@@ -352,11 +415,12 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
   }
 
   const agents = await chooseAgents();
+  const remote = await resolveRemote(agents);
   const configured: AgentTarget[] = [];
   for (const agent of agents) {
     let plan: ConfigPlan;
     try {
-      plan = planAgent(agent, ctx);
+      plan = planAgent(agent, ctx, remote);
     } catch (error) {
       if (!(error instanceof InitError)) throw error;
       ui.warn(`Skipped ${agent.name}: ${error.message}`);
@@ -376,8 +440,12 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
       ui.info(
         `${show(plan.path)} already has a different \`wopee\` server:\n${plan.existing}`,
       );
+      const replacement =
+        mcpKind(agent, remote) === "remote"
+          ? `the key-free remote server ${remote.url}`
+          : `the key-free \`${[MCP_COMMAND, ...MCP_ARGS].join(" ")}\` entry`;
       const replace = await ui.confirm(
-        `Replace it with the key-free \`${[MCP_COMMAND, ...MCP_ARGS].join(" ")}\` entry?`,
+        `Replace it with ${replacement}?`,
         false,
       );
       if (!replace) {
@@ -460,8 +528,12 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
       : `Connected to project ${projectUuid}${where}: ${analyses} ${analyses === 1 ? "analysis" : "analyses"} found.`,
   );
   if (!written.length) ui.info("Already set up: nothing changed.");
-  for (const agent of configured)
-    ui.info(`${agent.name}: ${agent.restartHint}.`);
+  for (const agent of configured) {
+    const remoteHere = mcpKind(agent, remote) === "remote";
+    ui.info(
+      `${agent.name}: ${restartHint(agent, remote)}${remoteHere ? ` (project ${projectUuid})` : ""}.`,
+    );
+  }
   // With --env-only the agent's plugin provides the server, so the setup is complete.
   const ready = configured.length > 0 || Boolean(options.envOnly);
   if (options.envOnly)
@@ -481,7 +553,11 @@ export async function run(options: RunOptions, ui: Ui): Promise<RunResult> {
     written,
     files: written.map(show),
     skipped,
-    agents: configured.map((a) => ({ id: a.id, restart: a.restartHint })),
+    agents: configured.map((a) => ({
+      id: a.id,
+      restart: restartHint(a, remote),
+      mcp: mcpKind(a, remote),
+    })),
     credentials: creds!.source,
   };
   ui.event?.({

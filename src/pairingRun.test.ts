@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import sodium from "libsodium-wrappers";
 
+import { claudeCodeEntry } from "./agents/table.ts";
 import { InitError } from "./errors.ts";
 import type { Clock } from "./pairing.ts";
 import { pairingStatePath } from "./pairingState.ts";
@@ -74,6 +75,8 @@ function fakeApi(
     info?: "pairing" | "csrf";
     validKeys?: string[];
     smokeDown?: boolean;
+    /** The remote MCP server /cli/info names; absent like an older api. */
+    mcpUrl?: string;
   } = {},
 ): FakeApi {
   const statuses = options.statuses ?? ["pending", "approved"];
@@ -96,6 +99,7 @@ function fakeApi(
               cmdUrl: "https://cmd.wopee.io",
               apiVersion: "5.250.0",
               pairing: true,
+              ...(options.mcpUrl ? { mcpUrl: options.mcpUrl } : {}),
             }),
           );
     }
@@ -277,7 +281,9 @@ test("agent mode pairs, writes .env and the MCP entry, and never shows the key",
     analyses: 0,
     files: [".gitignore", ".env", ".mcp.json"],
     skipped: [],
-    agents: [{ id: "claude-code", restart: result.agents[0].restart }],
+    agents: [
+      { id: "claude-code", restart: result.agents[0].restart, mcp: "stdio" },
+    ],
     first_prompt: "Run a Wopee analysis of <your app URL>",
   });
 
@@ -332,7 +338,8 @@ test("a slow approval hands back with the link, and --resume finishes the same p
 
   assert.equal(result.credentials, "paired");
   assert.equal(resumed.sessions.length, 1, "--resume started a second session");
-  assert.ok(!resumed.calls.includes("GET /cli/info"));
+  // No second pairing discovery: the one /cli/info call is the remote-server lookup.
+  assert.equal(resumed.calls.filter((c) => c === "GET /cli/info").length, 1);
   assert.match(
     read(join(repo, ".env")),
     new RegExp(`WOPEE_API_KEY=${PAIRED_KEY}`),
@@ -763,11 +770,11 @@ test(
 
 // ---------------------------------------------------------------- --dry-run, --print, --all
 
-test("--dry-run lists the changes and touches nothing, not even the api", async () => {
+test("--dry-run lists the changes and touches nothing; it only asks which server to write", async () => {
   const api = fakeApi();
   const ui = machineUi();
   await run(options(api, { dryRun: true }), ui);
-  assert.deepEqual(api.calls, []);
+  assert.deepEqual(api.calls, ["GET /cli/info"]);
   assert.equal(git("status", "--porcelain", "--untracked-files=all"), "");
   assert.deepEqual(ui.events, [
     {
@@ -796,7 +803,7 @@ test("--print gives the snippets and the variable names, never a value, and writ
     options(api, { print: true, agents: ["claude-code", "codex"] }),
     ui,
   );
-  assert.deepEqual(api.calls, []);
+  assert.deepEqual(api.calls, ["GET /cli/info"]);
   const [event] = ui.events;
   assert.equal(event.status, "print");
   assert.deepEqual(event.env, ["WOPEE_API_KEY", "WOPEE_PROJECT_UUID"]);
@@ -821,4 +828,123 @@ test("--all configures every supported agent", async () => {
     ["claude-code", "cursor", "vscode", "opencode", "codex"],
   );
   assert.ok(existsSync(join(home, ".codex", "config.toml")));
+});
+
+// ---------------------------------------------------------------- the remote MCP server
+
+const MCP_URL = "https://mcp.wopee.io/mcp";
+const claudeServer = () =>
+  JSON.parse(read(join(repo, ".mcp.json"))).mcpServers.wopee;
+
+test("where the instance runs a remote server, Claude Code gets the key-free URL entry; other agents keep stdio", async () => {
+  mkdirSync(join(repo, ".vscode"));
+  const ui = machineUi();
+  const result = await run(options(fakeApi({ mcpUrl: MCP_URL })), ui);
+
+  assert.deepEqual(claudeServer(), { type: "http", url: MCP_URL });
+  assert.equal(
+    JSON.parse(read(join(repo, ".vscode", "mcp.json"))).servers.wopee.type,
+    "stdio",
+  );
+  // The test SDKs still read the key from the env file.
+  assert.match(
+    read(join(repo, ".env")),
+    new RegExp(`WOPEE_API_KEY=${PAIRED_KEY}`),
+  );
+  assert.deepEqual(
+    result.agents.map((a) => [a.id, a.mcp]),
+    [
+      ["claude-code", "remote"],
+      ["vscode", "stdio"],
+    ],
+  );
+  assert.match(result.agents[0].restart, /\/mcp/);
+  assert.ok(
+    ui.text.some((t) => t.includes("/mcp") && t.includes(`project ${UUID}`)),
+    "the hint names the project to pick on the consent page",
+  );
+});
+
+test("--stdio keeps the local server where the instance runs a remote one", async () => {
+  const result = await run(
+    options(fakeApi({ mcpUrl: MCP_URL }), { stdio: true }),
+    machineUi(),
+  );
+  assert.deepEqual(claudeServer(), claudeCodeEntry());
+  assert.equal(result.agents[0].mcp, "stdio");
+});
+
+test("an init entry is switched to the remote server and back with --stdio, without a conflict", async () => {
+  writeFileSync(
+    join(repo, ".mcp.json"),
+    JSON.stringify({
+      mcpServers: { wopee: claudeCodeEntry(), other: { url: "x" } },
+    }),
+  );
+  await run(options(fakeApi({ mcpUrl: MCP_URL })), machineUi());
+  assert.deepEqual(claudeServer(), { type: "http", url: MCP_URL });
+  assert.deepEqual(JSON.parse(read(join(repo, ".mcp.json"))).mcpServers.other, {
+    url: "x",
+  });
+
+  const ui = machineUi();
+  await run(options(fakeApi({ mcpUrl: MCP_URL }), { stdio: true }), ui);
+  assert.deepEqual(claudeServer(), claudeCodeEntry());
+  assert.deepEqual((ui.events.at(-1) as { skipped: unknown[] }).skipped, []);
+});
+
+test("a remote server elsewhere, or not on https, is left alone or ignored", async () => {
+  writeFileSync(
+    join(repo, ".mcp.json"),
+    JSON.stringify({
+      mcpServers: { wopee: { type: "http", url: "https://mine.example/mcp" } },
+    }),
+  );
+  const ui = machineUi();
+  await run(options(fakeApi({ mcpUrl: MCP_URL })), ui);
+  assert.deepEqual(claudeServer(), {
+    type: "http",
+    url: "https://mine.example/mcp",
+  });
+
+  rmSync(join(repo, ".mcp.json"));
+  const plain = await run(
+    options(fakeApi({ mcpUrl: "http://mcp.wopee.io/mcp" })),
+    machineUi(),
+  );
+  assert.equal(plain.agents[0].mcp, "stdio");
+  assert.deepEqual(claudeServer(), claudeCodeEntry());
+});
+
+test("CI never asks for a remote server, so it keeps the local one", async () => {
+  const api = fakeApi({ validKeys: [OLD_KEY], mcpUrl: MCP_URL });
+  const result = await run(
+    options(api, {
+      interaction: "ci",
+      env: { WOPEE_API_KEY: OLD_KEY, WOPEE_PROJECT_UUID: UUID },
+    }),
+    machineUi(),
+  );
+  assert.ok(!api.calls.includes("GET /cli/info"));
+  assert.equal(result.agents[0].mcp, "stdio");
+});
+
+test("--print shows the entry the run would write", async () => {
+  const ui = machineUi();
+  await run(
+    options(fakeApi({ mcpUrl: MCP_URL }), {
+      print: true,
+      agents: ["claude-code", "cursor"],
+    }),
+    ui,
+  );
+  const snippets = ui.events[0].snippets as { snippet: string; mcp: string }[];
+  assert.deepEqual(JSON.parse(snippets[0].snippet).mcpServers.wopee, {
+    type: "http",
+    url: MCP_URL,
+  });
+  assert.deepEqual(
+    snippets.map((s) => s.mcp),
+    ["remote", "stdio"],
+  );
 });
