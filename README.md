@@ -44,6 +44,28 @@ a key and every config is safe to commit. Other servers and comments in these fi
 which can predate 1.35.0. An entry an older version of this command wrote (`npx -y wopee-mcp`) is
 upgraded when you run it again; an entry you changed yourself is left alone.
 
+### The remote server for Claude Code
+
+Where your Wopee.io instance runs the remote MCP server (Wopee.io Cloud does, at
+`https://mcp.wopee.io/mcp`), Claude Code gets that instead of the local package:
+
+```json
+{
+  "mcpServers": {
+    "wopee": { "type": "http", "url": "https://mcp.wopee.io/mcp" }
+  }
+}
+```
+
+Claude Code signs in through your browser the first time (`/mcp`, then Authenticate), and you
+pick the project and Read only or Read and write there. Nothing secret is in the file, and you can
+disconnect it any time in the project's settings under MCP Connections. The env file is still
+written, because the test SDKs and CI read the key from it.
+
+The other agents keep the local server for now. Self-hosted and dedicated instances that run no
+remote server keep it too, and so does CI. `--stdio` keeps the local server for Claude Code as
+well. Running the command again switches between the two entries without asking.
+
 If the env file already holds a key that works for the project, it is kept and no new key is
 created. Running the command again changes nothing.
 
@@ -65,7 +87,7 @@ The agent gives you the link and the words and waits for you. Once you say you a
 
 ```jsonc
 {"status":"pairing","verification_url":"https://cmd.wopee.io/cli/authorize?session=…","user_code":"brave-otter-42","expires_in":590}
-{"status":"success","project_uuid":"…","api_url":"https://api.wopee.io","analyses":3,"files":[".gitignore",".env",".mcp.json"],"skipped":[],"agents":[{"id":"claude-code","restart":"…"}],"first_prompt":"Run a Wopee analysis of <your app URL>"}
+{"status":"success","project_uuid":"…","api_url":"https://api.wopee.io","analyses":3,"files":[".gitignore",".env",".mcp.json"],"skipped":[],"agents":[{"id":"claude-code","restart":"…","mcp":"remote"}],"first_prompt":"Run a Wopee analysis of <your app URL>"}
 ```
 
 If the approval has not arrived yet, `--resume` waits up to about 90 seconds (inside the default time
@@ -107,6 +129,7 @@ with `missing_credentials`.
 | `--agent <id>`     | `claude-code`, `cursor`, `vscode`, `opencode` or `codex`; repeat it for several. Skips the picker                                             |
 | `--all`            | Configure every supported agent                                                                                                               |
 | `--env-only`       | Write only the env file and its `.gitignore` entry, no MCP config: for the Wopee.io agent plugin, which brings the server                     |
+| `--stdio`          | Give Claude Code the local server (`npx -y wopee-mcp@latest`) even where the instance runs the remote one                                     |
 | `--print`          | Print the MCP snippets and the variable names instead of writing anything. Creates no key                                                     |
 | `--dry-run`        | Show what would change, without writing anything or creating a key                                                                            |
 | `--no-open`        | Print the link without opening a browser                                                                                                      |

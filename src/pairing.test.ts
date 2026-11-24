@@ -520,3 +520,46 @@ test("calling agent: others keep a short plain name, nothing at all stays nothin
   assert.equal(callingAgentFromName(""), undefined);
   assert.equal(callingAgentFromName(undefined), undefined);
 });
+
+test("the remote server lookup gives an https URL, or null for anything else", async () => {
+  const { discoverRemoteMcp } = await import("./pairing.ts");
+  const answer = (status: number, body: unknown) =>
+    (async () =>
+      new Response(JSON.stringify(body), {
+        status,
+      })) as unknown as typeof fetch;
+  const api = "https://api.wopee.io";
+  assert.equal(
+    await discoverRemoteMcp(
+      api,
+      "t",
+      answer(200, { mcpUrl: "https://mcp.wopee.io/mcp/" }),
+    ),
+    "https://mcp.wopee.io/mcp",
+  );
+  assert.equal(
+    await discoverRemoteMcp(api, "t", answer(200, { mcpUrl: null })),
+    null,
+  );
+  assert.equal(
+    await discoverRemoteMcp(api, "t", answer(200, { pairing: true })),
+    null,
+  );
+  assert.equal(await discoverRemoteMcp(api, "t", answer(404, {})), null);
+  assert.equal(
+    await discoverRemoteMcp(
+      api,
+      "t",
+      answer(200, { mcpUrl: "http://mcp.wopee.io/mcp" }),
+    ),
+    null,
+  );
+  assert.equal(
+    await discoverRemoteMcp(api, "t", answer(200, { mcpUrl: "not a url" })),
+    null,
+  );
+  const down = (async () => {
+    throw new TypeError("fetch failed");
+  }) as unknown as typeof fetch;
+  assert.equal(await discoverRemoteMcp(api, "t", down), null);
+});

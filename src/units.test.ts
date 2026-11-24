@@ -208,13 +208,9 @@ const LEGACY_ENTRY = { command: "npx", args: ["-y", "wopee-mcp"] };
 
 test("json: the bare wopee-mcp entry an older init wrote is upgraded, not a conflict", () => {
   const text = JSON.stringify({ mcpServers: { wopee: LEGACY_ENTRY } });
-  const plan = planJsonEntry(
-    "f",
-    text,
-    ["mcpServers", "wopee"],
-    ENTRY,
+  const plan = planJsonEntry("f", text, ["mcpServers", "wopee"], ENTRY, [
     LEGACY_ENTRY,
-  );
+  ]);
   assert.equal(plan.status, "update");
   assert.deepEqual(JSON.parse(plan.next).mcpServers.wopee, ENTRY);
 });
@@ -228,7 +224,7 @@ test("json: the legacy Claude Code entry on Windows (cmd /c) is upgraded too", (
     text,
     ["mcpServers", "wopee"],
     claudeCodeEntry("win32"),
-    legacy,
+    [legacy],
   );
   assert.equal(plan.status, "update");
 });
@@ -239,13 +235,9 @@ test("json: a bare wopee-mcp entry with the user's own additions stays a conflic
       wopee: { ...LEGACY_ENTRY, env: { WOPEE_API_URL: "https://x" } },
     },
   });
-  const plan = planJsonEntry(
-    "f",
-    text,
-    ["mcpServers", "wopee"],
-    ENTRY,
+  const plan = planJsonEntry("f", text, ["mcpServers", "wopee"], ENTRY, [
     LEGACY_ENTRY,
-  );
+  ]);
   assert.equal(plan.status, "conflict");
 });
 

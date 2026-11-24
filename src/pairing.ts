@@ -46,6 +46,33 @@ export async function discoverPairing(
   return { available: true, cmdUrl: info.cmdUrl.replace(/\/+$/, "") };
 }
 
+/**
+ * The remote MCP server this api runs, from `/cli/info`: an https URL, or null when the instance
+ * runs none (tenants, self-hosted), is too old to say, or cannot be reached. Never throws: without
+ * an answer the setup writes today's local (stdio) server.
+ */
+export async function discoverRemoteMcp(
+  apiUrl: string,
+  userAgent: string,
+  fetchImpl?: typeof fetch,
+): Promise<string | null> {
+  try {
+    const { status, body } = await requestJson(apiUrl, "/cli/info", {
+      method: "GET",
+      userAgent,
+      fetchImpl,
+    });
+    const url = (body as { mcpUrl?: unknown } | undefined)?.mcpUrl;
+    if (status < 200 || status >= 300 || typeof url !== "string") return null;
+    const parsed = new URL(url);
+    return parsed.protocol === "https:"
+      ? parsed.href.replace(/\/+$/, "")
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface SessionRequest {
   client: string;
   agent: string;

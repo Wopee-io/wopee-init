@@ -39,6 +39,12 @@ export interface JsonAgent extends AgentBase {
     ctx: AgentContext,
     args?: readonly string[],
   ) => Record<string, unknown>;
+  /**
+   * The key-free entry for the instance's remote MCP server, for agents tested against it. The
+   * agent signs in through the browser, so nothing secret is in the file.
+   */
+  remoteEntry?: (url: string) => Record<string, unknown>;
+  remoteRestartHint?: string;
 }
 
 export interface TomlAgent extends AgentBase {
@@ -79,6 +85,9 @@ export const AGENTS: readonly AgentTarget[] = [
     entry: (_ctx, args) => claudeCodeEntry(process.platform, args),
     restartHint:
       "quit Claude Code, start `claude` again in this folder and choose “Use this MCP server”",
+    remoteEntry: (url) => ({ type: "http", url }),
+    remoteRestartHint:
+      "start `claude` in this folder, run `/mcp`, choose `wopee`, then Authenticate and approve in the browser",
   },
   {
     id: "cursor",
